@@ -1,0 +1,21 @@
+# Out-of-source CMake and generated build products.
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/CMakeUserPresets.json
+/compile_commands.json
+
+# Local editor files.
+*.swp
+*~
+
+# Local AI instructions and configuration
+/AGENTS.md
+/.agents/
+/.codex/
+/.clang-format
+
+# Internal project evidence and documentation
+/SOURCE_EVIDENCE.md
+/docs/

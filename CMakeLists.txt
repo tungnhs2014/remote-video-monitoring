@@ -14,7 +14,8 @@ include(GNUInstallDirs)
 
 option(CAMSTREAM_M1_GSTREAMER_SMOKE "Build the M1 GStreamer/GObject dependency smoke test" ON)
 
-# These directories reserve the approved module boundaries. M1 adds no application implementation targets.
+# Build the shared C11 logger before its backend consumers.
+add_subdirectory(libs/common)
 add_subdirectory(libs/camera-hal)
 add_subdirectory(backends/camera/simulated)
 add_subdirectory(backends/camera/v4l2)

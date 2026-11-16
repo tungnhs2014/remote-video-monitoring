@@ -69,7 +69,7 @@ add_library(camstream-camera-backend-v4l2-fake MODULE
 target_compile_definitions(camstream-camera-backend-v4l2-fake PRIVATE CAMSTREAM_V4L2_TEST_IO)
 target_compile_features(camstream-camera-backend-v4l2-fake PRIVATE c_std_11)
 target_compile_options(camstream-camera-backend-v4l2-fake PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(camstream-camera-backend-v4l2-fake PRIVATE camstream::camera-hal)
+target_link_libraries(camstream-camera-backend-v4l2-fake PRIVATE camstream::camera-hal camstream::common-log)
 
 add_executable(camstream-camera-v4l2-phase1-tests src/v4l2_phase1_regression.c)
 set_target_properties(camstream-camera-v4l2-phase1-tests PROPERTIES ENABLE_EXPORTS YES)
@@ -79,6 +79,10 @@ target_link_libraries(camstream-camera-v4l2-phase1-tests PRIVATE camstream::came
 add_dependencies(camstream-camera-v4l2-phase1-tests camstream-camera-backend-v4l2-fake)
 add_test(NAME camera-v4l2-phase1-regressions
     COMMAND camstream-camera-v4l2-phase1-tests $<TARGET_FILE:camstream-camera-backend-v4l2-fake>)
+add_test(NAME camera-v4l2-configuration-regressions
+    COMMAND camstream-camera-v4l2-phase1-tests $<TARGET_FILE:camstream-camera-backend-v4l2-fake> --configuration)
+add_test(NAME camera-v4l2-streaming-regressions
+    COMMAND camstream-camera-v4l2-phase1-tests $<TARGET_FILE:camstream-camera-backend-v4l2-fake> --streaming)
 
 add_executable(camstream-camera-v4l2-device-smoke src/v4l2_device_smoke.c)
 target_compile_features(camstream-camera-v4l2-device-smoke PRIVATE c_std_11)

@@ -1,9 +1,11 @@
+#define _POSIX_C_SOURCE 200809L
 #include <camstream/camera/camera_backend.h>
 
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 struct camstream_camera_instance
 {
@@ -13,7 +15,11 @@ struct camstream_camera_instance
     bool outstanding;
     bool fail_release_once;
     bool invalid_frame;
-    uint8_t payload[8];
+    bool fail_acquire;
+    bool wait_timeout;
+    bool padded;
+    uint64_t next_sequence;
+    uint8_t payload[16];
 };
 
 static camstream_camera_status_t fault_create(camstream_camera_instance** instance)
@@ -41,13 +47,17 @@ static camstream_camera_status_t fault_open(camstream_camera_instance* instance,
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
-    if (strcmp(source, "release-fail") != 0 && strcmp(source, "invalid-frame") != 0)
+    if (strcmp(source, "release-fail") != 0 && strcmp(source, "invalid-frame") != 0 &&
+            strcmp(source, "acquire-fail") != 0 && strcmp(source, "wait-timeout") != 0 && strcmp(source, "padded") != 0)
     {
         return CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
     }
     instance->opened = true;
-    instance->fail_release_once = true;
+    instance->fail_release_once = strcmp(source, "release-fail") == 0 || strcmp(source, "invalid-frame") == 0;
     instance->invalid_frame = strcmp(source, "invalid-frame") == 0;
+    instance->fail_acquire = strcmp(source, "acquire-fail") == 0;
+    instance->wait_timeout = strcmp(source, "wait-timeout") == 0;
+    instance->padded = strcmp(source, "padded") == 0;
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
@@ -113,7 +123,11 @@ static camstream_camera_status_t fault_get_configuration(
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    fill_configuration(configuration, instance->invalid_frame ? "invalid-frame" : "release-fail");
+    fill_configuration(configuration, instance->invalid_frame  ? "invalid-frame"
+                                      : instance->fail_acquire ? "acquire-fail"
+                                      : instance->wait_timeout ? "wait-timeout"
+                                      : instance->padded       ? "padded"
+                                                               : "release-fail");
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
@@ -149,12 +163,21 @@ static camstream_camera_status_t fault_start(camstream_camera_instance* instance
 
 static camstream_camera_status_t fault_wait(camstream_camera_instance* instance, uint32_t timeout_ms)
 {
-    (void)timeout_ms;
     if (instance == NULL)
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    return instance->started ? CAMSTREAM_CAMERA_STATUS_OK : CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
+    if (!instance->started)
+    {
+        return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
+    }
+    if (instance->wait_timeout)
+    {
+        struct timespec delay = {.tv_sec = timeout_ms / 1000U, .tv_nsec = (long)(timeout_ms % 1000U) * 1000000L};
+        nanosleep(&delay, NULL);
+        return CAMSTREAM_CAMERA_STATUS_TIMEOUT;
+    }
+    return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
 static camstream_camera_status_t fault_acquire(camstream_camera_instance* instance, camstream_camera_frame_v1* frame)
@@ -167,10 +190,16 @@ static camstream_camera_status_t fault_acquire(camstream_camera_instance* instan
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
+    if (instance->fail_acquire)
+    {
+        return CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
+    }
     memset(frame, 0, sizeof(*frame));
     frame->abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1;
     frame->struct_size = sizeof(*frame);
     frame->frame_token = 1U;
+    frame->sequence_number = instance->next_sequence;
+    instance->next_sequence += instance->padded ? 2U : 1U;
     frame->width = 2U;
     frame->height = 2U;
     frame->pixel_format = CAMSTREAM_CAMERA_PIXEL_FORMAT_YUYV;
@@ -178,9 +207,17 @@ static camstream_camera_status_t fault_acquire(camstream_camera_instance* instan
     frame->planes[0].abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1;
     frame->planes[0].struct_size = sizeof(frame->planes[0]);
     frame->planes[0].data = instance->payload;
-    frame->planes[0].allocation_size = sizeof(instance->payload);
-    frame->planes[0].bytes_used = instance->invalid_frame ? 0U : sizeof(instance->payload);
-    frame->planes[0].stride = 4U;
+    frame->planes[0].allocation_size = instance->padded ? sizeof(instance->payload) : 8U;
+    frame->planes[0].bytes_used = instance->invalid_frame ? 0U : frame->planes[0].allocation_size;
+    frame->planes[0].stride = instance->padded ? 8U : 4U;
+    if (instance->padded)
+    {
+        memset(instance->payload, 0xee, sizeof(instance->payload));
+        for (uint32_t index = 0U; index < 8U; ++index)
+        {
+            instance->payload[index + (index >= 4U ? 4U : 0U)] = (uint8_t)(frame->sequence_number + index);
+        }
+    }
     instance->outstanding = true;
     return CAMSTREAM_CAMERA_STATUS_OK;
 }

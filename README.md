@@ -42,16 +42,15 @@ Development is organized into incremental milestones.
 | M1 — Project foundation and build system | Completed |
 | M2-A — Camera HAL and simulated backend | Completed |
 | M2-B — V4L2 Phase-1 camera discovery | Completed |
-| V4L2 configuration and frame capture | Planned |
-| GStreamer integration | Planned |
+| M3 — V4L2 configuration and frame capture | Completed; BBB C270 640x480@15 FPS owner-reported PASS |
+| M4-A — camstreamsrc copy-first source | Host implemented and verified; BBB NOT TESTED |
+| M4-B — session-owner smoke harness | Host implemented and verified; BBB NOT TESTED |
 | gRPC remote control | Planned |
-| BeagleBone Black hardware validation | Pending |
+| BeagleBone Black hardware validation | M3 camera streaming PASS at 15 FPS; M4 plugin and harness pending |
 
-The current V4L2 implementation supports device capability inspection
-and enumeration of supported discrete YUYV configurations.
-
-Camera configuration, frame acquisition, video streaming, and remote
-control are not yet implemented.
+The V4L2 backend implements YUYV configuration and MMAP streaming through Camera HAL. The M4-A plugin copies frames
+into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 30 FPS USB/MUSB instability remains
+open. Remote control and network media delivery are not implemented.
 
 ## 4. Build and Test
 
@@ -60,12 +59,12 @@ control are not yet implemented.
 - CMake 3.16 or later
 - C11 and C++17 compatible compilers
 - Linux development environment
-- GStreamer development packages for the optional GStreamer smoke test
+- GStreamer and GLib development packages for `camstreamsrc` and its host tests
 
 ### Host Build
 
 ```bash
-cmake -S . -B build -DCAMSTREAM_M1_GSTREAMER_SMOKE=OFF
+cmake -S . -B build
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -74,8 +73,10 @@ ctest --test-dir build --output-on-failure
 
 ARM cross-compilation is supported through the existing CMake build system.
 
-Target toolchain selection and reproducible Buildroot integration will
-be finalized as development progresses.
+The saved Buildroot defconfig selects GStreamer for the ARM toolchain. Build the M4-B session-owner
+harness with `-DCAMSTREAM_M4_SESSION_SMOKE=ON`. The harness accepts a backend module, plugin module,
+source identifier, YUYV mode, frame count and cycle count. An ARM cross-build does not establish
+plugin runtime behavior on the board.
 
 ## 5. Verification
 
@@ -87,7 +88,8 @@ Current development verification includes:
 - AddressSanitizer and UndefinedBehaviorSanitizer testing
 - ARM cross-compilation
 
-Real-camera execution on the BeagleBone Black remains pending.
+The owner reports M3 C270 YUYV 640x480@15 FPS streaming PASS on BeagleBone Black. The M4 plugin and
+M4-B harness have not been deployed or executed there; 30 FPS USB/MUSB instability remains open.
 
 ## 6. Project Goals
 
@@ -103,8 +105,8 @@ Real-camera execution on the BeagleBone Black remains pending.
 
 **Work in progress.**
 
-The repository currently contains the project foundation,
-Camera HAL, simulated backend, and initial V4L2 implementation.
+The repository contains the project foundation, Camera HAL, simulated and V4L2 backends, the M4-A
+custom source and the M4-B session-owner smoke harness.
 
 Further functionality will be developed and validated
 incrementally on the target hardware.

@@ -2,8 +2,10 @@ find_package(Threads REQUIRED)
 
 add_library(camstream-camera-hal SHARED
     src/camera_backend_runtime.c
+    src/camera_core.c
     src/camera_hal.c
 )
+set_source_files_properties(src/camera_core.c PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
 add_library(camstream::camera-hal ALIAS camstream-camera-hal)
 
 target_include_directories(camstream-camera-hal PUBLIC

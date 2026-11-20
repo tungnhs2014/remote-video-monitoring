@@ -129,9 +129,10 @@ extern "C"
     /**
      * @brief Releases one backend-module reference.
      *
-     * The last release unloads the module. It fails while any HAL camera instance
-     * remains alive, enforcing destroy-before-dlclose ordering. A failed module
-     * close leaves the runtime faulted and unavailable rather than falsely unloaded.
+     * A nonfinal release succeeds even while a camera exists. The final release
+     * fails while a camera or create reservation remains; the reference is then
+     * retained. Otherwise it unloads the module after all instances are destroyed.
+     * A failed module close leaves the runtime faulted and unavailable.
      */
     camstream_camera_status_t camstream_camera_hal_unload_backend(void);
 
@@ -194,6 +195,8 @@ extern "C"
      * @brief Returns an outstanding frame token and invalidates its plane views.
      *
      * Unknown, stale, already-released, and different-camera tokens are rejected.
+     * If backend release fails, the token and plane ownership remain outstanding
+     * for a serialized retry or best-effort destruction.
      */
     camstream_camera_status_t camstream_camera_release_frame(camstream_camera* camera, uint64_t frame_token);
 

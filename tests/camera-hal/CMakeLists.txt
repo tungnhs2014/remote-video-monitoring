@@ -64,8 +64,9 @@ add_test(NAME camera-hal-runtime-regressions
         $<TARGET_FILE:camstream-camera-backend-blocking-create>
 )
 
-add_library(camstream-camera-backend-v4l2-fake MODULE
-    ../../backends/camera/v4l2/src/camera_backend_v4l2.c)
+get_target_property(CAMSTREAM_V4L2_SOURCES camstream-camera-backend-v4l2 SOURCES)
+add_library(camstream-camera-backend-v4l2-fake MODULE ${CAMSTREAM_V4L2_SOURCES})
+set_target_properties(camstream-camera-backend-v4l2-fake PROPERTIES C_VISIBILITY_PRESET hidden)
 target_compile_definitions(camstream-camera-backend-v4l2-fake PRIVATE CAMSTREAM_V4L2_TEST_IO)
 target_compile_features(camstream-camera-backend-v4l2-fake PRIVATE c_std_11)
 target_compile_options(camstream-camera-backend-v4l2-fake PRIVATE -Wall -Wextra -Wpedantic)

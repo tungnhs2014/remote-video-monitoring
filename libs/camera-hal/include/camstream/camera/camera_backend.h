@@ -20,7 +20,13 @@ extern "C"
     /** @brief Opaque backend instance owned by the HAL after create(). */
     typedef struct camstream_camera_instance camstream_camera_instance;
 
-    /** @brief Creates one opaque instance; ownership passes to the HAL. */
+    /**
+     * @brief Creates one opaque instance; ownership passes to the HAL.
+     *
+     * A failed create may return a partially initialized, non-NULL instance.
+     * The HAL calls destroy on that instance before releasing its module-create
+     * reservation, so destroy must accept partial initialization.
+     */
     typedef camstream_camera_status_t (*camstream_camera_create_v1_fn)(camstream_camera_instance** instance);
 
     /**

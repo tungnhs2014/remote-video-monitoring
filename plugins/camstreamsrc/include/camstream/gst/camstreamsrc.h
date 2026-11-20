@@ -14,7 +14,8 @@ G_DECLARE_FINAL_TYPE(CamstreamSrc, camstream_src, CAMSTREAM, SRC, GstPushSrc)
  *
  * The session owner starts HAL before the source enters PAUSED, and stops/destroys HAL only after the pipeline
  * reaches NULL and any pending release is resolved. The owner serializes its HAL calls with source activity.
- * Call only while the source is stopped. Passing NULL for both arguments unbinds a quiescent source.
+ * Call only while the source is stopped. Passing NULL for both arguments unbinds a quiescent source; an unresolved
+ * release prevents unbinding so the borrowed camera remains available for cleanup.
  */
 gboolean camstream_src_bind(
         CamstreamSrc* source, camstream_camera* camera, const camstream_camera_stream_config_v1* active);

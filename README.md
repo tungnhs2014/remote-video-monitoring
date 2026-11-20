@@ -43,14 +43,17 @@ Development is organized into incremental milestones.
 | M2-A — Camera HAL and simulated backend | Completed |
 | M2-B — V4L2 Phase-1 camera discovery | Completed |
 | M3 — V4L2 configuration and frame capture | Completed; BBB C270 640x480@15 FPS owner-reported PASS |
-| M4-A — camstreamsrc copy-first source | Host implemented and verified; BBB NOT TESTED |
-| M4-B — session-owner smoke harness | Host implemented and verified; BBB NOT TESTED |
+| M4-A — camstreamsrc copy-first source | Host verified; M4-B BBB functional smoke owner-reported PASS |
+| M4-B — session-owner smoke harness | Host verified; owner-reported BBB 640x480@15 FPS, 30 frames × 2 cycles PASS |
+| R1 — architecture and coding-style adoption | Local interface/documentation update; BBB after R1 NOT RUN |
+| R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB after R1-B NOT RUN |
 | gRPC remote control | Planned |
-| BeagleBone Black hardware validation | M3 camera streaming PASS at 15 FPS; M4 plugin and harness pending |
+| BeagleBone Black hardware validation | M3 and M4-B functional smoke owner-reported PASS; USB/MUSB reliability open |
 
 The V4L2 backend implements YUYV configuration and MMAP streaming through Camera HAL. The M4-A plugin copies frames
-into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 30 FPS USB/MUSB instability remains
-open. Remote control and network media delivery are not implemented.
+into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 USB/MUSB reset issue with an
+unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. Remote control and network
+media delivery are not implemented.
 
 ## 4. Build and Test
 
@@ -88,8 +91,9 @@ Current development verification includes:
 - AddressSanitizer and UndefinedBehaviorSanitizer testing
 - ARM cross-compilation
 
-The owner reports M3 C270 YUYV 640x480@15 FPS streaming PASS on BeagleBone Black. The M4 plugin and
-M4-B harness have not been deployed or executed there; 30 FPS USB/MUSB instability remains open.
+The owner reports M3 C270 streaming and an M4-B functional smoke with two 30-frame cycles at YUYV 640x480@15 FPS
+on BeagleBone Black. R1-B changes have not been run on the board. This functional evidence does not resolve
+`STAGE7-USB-01` USB/MUSB stability or establish long-run delivered throughput.
 
 ## 6. Project Goals
 

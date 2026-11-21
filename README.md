@@ -46,7 +46,8 @@ Development is organized into incremental milestones.
 | M4-A — camstreamsrc copy-first source | Host verified; M4-B BBB functional smoke owner-reported PASS |
 | M4-B — session-owner smoke harness | Host verified; owner-reported BBB 640x480@15 FPS, 30 frames × 2 cycles PASS |
 | R1 — architecture and coding-style adoption | Local interface/documentation update; BBB after R1 NOT RUN |
-| R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB after R1-B NOT RUN |
+| R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB 2 × 30-frame C270 functional smoke owner-reported PASS |
+| M5 — CameraService and GStreamerController | Host and ARM build locally verified; BBB NOT RUN |
 | gRPC remote control | Planned |
 | BeagleBone Black hardware validation | M3 and M4-B functional smoke owner-reported PASS; USB/MUSB reliability open |
 
@@ -91,8 +92,8 @@ Current development verification includes:
 - AddressSanitizer and UndefinedBehaviorSanitizer testing
 - ARM cross-compilation
 
-The owner reports M3 C270 streaming and an M4-B functional smoke with two 30-frame cycles at YUYV 640x480@15 FPS
-on BeagleBone Black. R1-B changes have not been run on the board. This functional evidence does not resolve
+The owner reports M3 C270 streaming, M4-B functional smoke and a post-R1-B smoke with two 30-frame cycles at
+YUYV 640x480@15 FPS on BeagleBone Black. M5 has not been run on the board. This functional evidence does not resolve
 `STAGE7-USB-01` USB/MUSB stability or establish long-run delivered throughput.
 
 ## 6. Project Goals

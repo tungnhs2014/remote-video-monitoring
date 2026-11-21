@@ -1,1 +1,10 @@
-# M5 will add the C++17 GStreamer controller target.
+add_library(camstream-gstreamer-controller STATIC src/gstreamer_controller.cpp)
+add_library(camstream::gstreamer-controller ALIAS camstream-gstreamer-controller)
+target_compile_features(camstream-gstreamer-controller PUBLIC cxx_std_17)
+target_compile_options(camstream-gstreamer-controller PRIVATE -Wall -Wextra -Wpedantic)
+target_include_directories(camstream-gstreamer-controller PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(camstream-gstreamer-controller PUBLIC gstcamstreamsrc PkgConfig::CAMSTREAM_GST camstream::camera-hal
+    PRIVATE camstream::common-log)
+if(BUILD_TESTING)
+    target_compile_definitions(camstream-gstreamer-controller PUBLIC CAMSTREAM_M5_TESTING)
+endif()

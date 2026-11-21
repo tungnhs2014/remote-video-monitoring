@@ -1,5 +1,5 @@
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(CAMSTREAM_GST REQUIRED IMPORTED_TARGET
+pkg_check_modules(CAMSTREAM_GST REQUIRED IMPORTED_TARGET GLOBAL
     gobject-2.0
     gstreamer-1.0
     gstreamer-base-1.0)

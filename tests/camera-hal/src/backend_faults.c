@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include <camstream/camera/camera_backend.h>
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -17,10 +18,31 @@ struct camstream_camera_instance
     bool invalid_frame;
     bool fail_acquire;
     bool wait_timeout;
+    bool blocked_wait;
+    bool gated_release;
     bool padded;
     uint64_t next_sequence;
     uint8_t payload[16];
 };
+
+static atomic_bool blocked_wait_active = ATOMIC_VAR_INIT(false);
+static atomic_bool blocked_wait_release = ATOMIC_VAR_INIT(false);
+static atomic_bool release_failed = ATOMIC_VAR_INIT(false);
+
+bool camstream_test_wait_active(void)
+{
+    return atomic_load_explicit(&blocked_wait_active, memory_order_acquire);
+}
+
+void camstream_test_release_wait(void)
+{
+    atomic_store_explicit(&blocked_wait_release, true, memory_order_release);
+}
+
+bool camstream_test_release_failed(void)
+{
+    return atomic_load_explicit(&release_failed, memory_order_acquire);
+}
 
 static camstream_camera_status_t fault_create(camstream_camera_instance** instance)
 {
@@ -48,15 +70,25 @@ static camstream_camera_status_t fault_open(camstream_camera_instance* instance,
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
     if (strcmp(source, "release-fail") != 0 && strcmp(source, "invalid-frame") != 0 &&
-            strcmp(source, "acquire-fail") != 0 && strcmp(source, "wait-timeout") != 0 && strcmp(source, "padded") != 0)
+            strcmp(source, "acquire-fail") != 0 && strcmp(source, "wait-timeout") != 0 &&
+            strcmp(source, "blocked-wait") != 0 && strcmp(source, "gated-release") != 0 &&
+            strcmp(source, "padded") != 0)
     {
         return CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
     }
     instance->opened = true;
-    instance->fail_release_once = strcmp(source, "release-fail") == 0 || strcmp(source, "invalid-frame") == 0;
+    instance->fail_release_once = strcmp(source, "release-fail") == 0 || strcmp(source, "invalid-frame") == 0 ||
+                                  strcmp(source, "gated-release") == 0;
     instance->invalid_frame = strcmp(source, "invalid-frame") == 0;
     instance->fail_acquire = strcmp(source, "acquire-fail") == 0;
     instance->wait_timeout = strcmp(source, "wait-timeout") == 0;
+    instance->blocked_wait = strcmp(source, "blocked-wait") == 0 || strcmp(source, "gated-release") == 0;
+    instance->gated_release = strcmp(source, "gated-release") == 0;
+    atomic_store_explicit(&release_failed, false, memory_order_release);
+    if (instance->blocked_wait)
+    {
+        atomic_store_explicit(&blocked_wait_release, false, memory_order_release);
+    }
     instance->padded = strcmp(source, "padded") == 0;
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
@@ -123,11 +155,13 @@ static camstream_camera_status_t fault_get_configuration(
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    fill_configuration(configuration, instance->invalid_frame  ? "invalid-frame"
-                                      : instance->fail_acquire ? "acquire-fail"
-                                      : instance->wait_timeout ? "wait-timeout"
-                                      : instance->padded       ? "padded"
-                                                               : "release-fail");
+    fill_configuration(configuration, instance->invalid_frame   ? "invalid-frame"
+                                      : instance->fail_acquire  ? "acquire-fail"
+                                      : instance->wait_timeout  ? "wait-timeout"
+                                      : instance->gated_release ? "gated-release"
+                                      : instance->blocked_wait  ? "blocked-wait"
+                                      : instance->padded        ? "padded"
+                                                                : "release-fail");
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
@@ -170,6 +204,18 @@ static camstream_camera_status_t fault_wait(camstream_camera_instance* instance,
     if (!instance->started)
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
+    }
+    if (instance->blocked_wait && instance->next_sequence > 0U)
+    {
+        atomic_store_explicit(&blocked_wait_active, true, memory_order_release);
+        for (uint32_t attempt = 0U;
+                attempt < 5000U && !atomic_load_explicit(&blocked_wait_release, memory_order_acquire); ++attempt)
+        {
+            const struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000L};
+            nanosleep(&delay, NULL);
+        }
+        atomic_store_explicit(&blocked_wait_active, false, memory_order_release);
+        return instance->gated_release ? CAMSTREAM_CAMERA_STATUS_OK : CAMSTREAM_CAMERA_STATUS_TIMEOUT;
     }
     if (instance->wait_timeout)
     {
@@ -232,9 +278,10 @@ static camstream_camera_status_t fault_release(camstream_camera_instance* instan
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    if (instance->fail_release_once)
+    if (instance->fail_release_once && (!instance->gated_release || instance->next_sequence > 1U))
     {
         instance->fail_release_once = false;
+        atomic_store_explicit(&release_failed, true, memory_order_release);
         return CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
     }
     instance->outstanding = false;

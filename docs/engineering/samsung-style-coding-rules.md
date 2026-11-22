@@ -1,7 +1,23 @@
 # RVM Engineering Rules — Samsung-Inspired Clean Code (V3 / R1-B)
 
-> Applies to: R1-B Camera HAL C11, V4L2 backend C11 and directly affected tests/build; later M5 C++17 work  
-> Status: **R1-B SOURCE SPLIT LOCALLY VERIFIED; OWNER REVIEW PENDING**  
+> **R2-Fixup owner style:** Standalone API declarations are grouped by lifecycle/role with one blank line where it
+> improves scanning; operation-table members stay compact. Keep readable prototypes and function-pointer declarations
+> on one physical line up to an approximately 140-column practical target. Use native clang-format-14 grouped wrapping
+> only for genuinely long declarations. `extern "C"` adds no declaration indentation. The repository `.clang-format`
+> defines this layout; C11/C++17 retain Allman braces and four-space indentation. Clang-format 14 indents conditional
+> `extern "C"` blocks despite `IndentExternBlock: NoIndent`, so use a scoped formatter exclusion for the declarations
+> inside those blocks and review their layout visually.
+> These R2-Fixup choices apply to subsequent userspace milestones.
+
+> **R2 update:** The R1-B source split and ownership rules below remain in force. The later owner-approved R2
+> decision in `docs/architecture/samsung-style-architecture-decision.md` replaces only the backend registration SPI
+> with HAL-owned v2 constructor injection. Public HAL ABI and Core token/state ownership remain unchanged. R2 uses
+> explicit `camera_*` operation names, constructor table assignment followed by metadata/version, full loader-side
+> validation, the existing `CAM_LOG*` logger, and uppercase CMake command names. This is RVM engineering policy,
+> not a claim of Samsung-wide or formal coding-standard compliance.
+
+> Applies to: R2-Fixup Camera HAL C11, V4L2 backend C11, plugin C/GObject and C++17 service/controller
+> Status: **R2-FIXUP LOCAL VERIFICATION; OWNER REVIEW PENDING**
 > Architectural companion: [`../architecture/samsung-style-architecture-decision.md`](../architecture/samsung-style-architecture-decision.md)
 
 ## 1. Intent, authority and review priorities
@@ -15,7 +31,7 @@ Priority: **preserved behavior and ABI → lifecycle/concurrency correctness →
 | Area | R1-B rule |
 |---|---|
 | Language | C11 HAL/runtime/V4L2/simulated; C/GObject GStreamer plugin; future C++17 service/controller |
-| Formatting | Existing repository `.clang-format`, **clang-format-14** where available; 4-space indentation, Allman braces, ~120 columns, consistent wrapped arguments |
+| Formatting | Repository `.clang-format`, **clang-format-14**; 4-space indentation, Allman braces, ~140 columns, readable grouped wrapping and no extern-block declaration indentation |
 | Public symbols | Keep **exact** `camstream_camera_*` names, public enum/status numeric values, HAL/SPI signature and exported ABI; no style-driven renames |
 | Private symbols | Brief but unambiguous `snake_case`; example `camera_core_start`, `v4l2_prepare_buffers`, `v4l2_read_frame`; local helpers `static` |
 | Functions | One cohesive task; consistent early validation and explicit error exit; avoid deep nesting and long parameter lists when a genuine private context already exists |

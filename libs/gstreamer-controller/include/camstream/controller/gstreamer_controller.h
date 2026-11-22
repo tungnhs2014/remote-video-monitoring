@@ -22,8 +22,8 @@ class GStreamerController final
     GStreamerController& operator=(const GStreamerController&) = delete;
 
     /** Starts a pipeline for an already started HAL camera; the caller serializes lifecycle operations. */
-    bool start(camstream_camera* camera, const camstream_camera_stream_config_v1& active,
-            const std::string& plugin_path, std::string& error);
+    bool start(
+            camstream_camera* camera, const camstream_camera_stream_config_v1& active, const std::string& plugin_path, std::string& error);
 
     /** Quiesces callbacks, resolves pending HAL release, then drops the borrowed camera and owned Gst objects. */
     bool stop(std::string& error);

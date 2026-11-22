@@ -312,36 +312,31 @@ static camstream_camera_status_t fault_get_error(camstream_camera_instance* inst
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
-typedef struct extended_descriptor
-{
-    camstream_camera_backend_v1 base;
-    uint8_t extension[8];
-} extended_descriptor;
-
-static const extended_descriptor descriptor = {
-        .base =
-                {
-                        .abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1,
-                        .struct_size = sizeof(extended_descriptor),
-                        .backend_name = "fault-test",
-                        .create = fault_create,
-                        .destroy = fault_destroy,
-                        .open = fault_open,
-                        .close = fault_close,
-                        .get_capabilities = fault_get_capabilities,
-                        .get_stream_configuration = fault_get_configuration,
-                        .configure = fault_configure,
-                        .start = fault_start,
-                        .wait_frame = fault_wait,
-                        .acquire_frame = fault_acquire,
-                        .release_frame = fault_release,
-                        .stop = fault_stop,
-                        .get_last_error = fault_get_error,
-                },
-        .extension = {0},
-};
-
 __attribute__((constructor)) static void register_fault_backend(void)
 {
-    (void)camstream_camera_hal_register_backend_v1(&descriptor.base);
+    camstream_camera_binding_v2* binding = NULL;
+    if (camstream_camera_hal_get_binding_slot_v2(&binding, sizeof(camstream_camera_binding_v2),
+                sizeof(camstream_camera_ops_v2)) != CAMSTREAM_CAMERA_STATUS_OK)
+    {
+        return;
+    }
+    *binding->control_funcs = (camstream_camera_ops_v2){
+            .struct_size = sizeof(camstream_camera_ops_v2),
+            .camera_create = fault_create,
+            .camera_destroy = fault_destroy,
+            .camera_open = fault_open,
+            .camera_close = fault_close,
+            .camera_get_capabilities = fault_get_capabilities,
+            .camera_get_stream_configuration = fault_get_configuration,
+            .camera_configure = fault_configure,
+            .camera_start = fault_start,
+            .camera_wait_frame = fault_wait,
+            .camera_acquire_frame = fault_acquire,
+            .camera_release_frame = fault_release,
+            .camera_stop = fault_stop,
+            .camera_get_last_error = fault_get_error,
+    };
+    binding->backend_name = "fault-test";
+    binding->struct_size = sizeof(*binding);
+    binding->abi_version = CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2;
 }

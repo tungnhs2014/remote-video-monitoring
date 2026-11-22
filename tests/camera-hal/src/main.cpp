@@ -1,4 +1,4 @@
-#include <camstream/camera/camera_hal.h>
+#include <camstream/camera/camera_backend.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -135,7 +135,7 @@ class DirectHalProbe final
             require(std::string(backend_name) == "simulated", "unexpected constructor-registered backend identity");
             require_status(camstream_camera_get_backend_abi_version(camera_a, &abi_version), CAMSTREAM_CAMERA_STATUS_OK,
                     "get backend ABI version");
-            require(abi_version == CAMSTREAM_CAMERA_ABI_VERSION_V1, "simulated backend ABI version mismatch");
+            require(abi_version == CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2, "simulated backend SPI version mismatch");
         }
         catch (...)
         {
@@ -234,6 +234,36 @@ void test_failed_load_recovery(const std::string& missing_registration_path, con
     require_status(camstream_camera_hal_unload_backend(), CAMSTREAM_CAMERA_STATUS_OK, "unload recovered backend");
 }
 
+void test_binding_rejection(int argc, char* argv[])
+{
+    camstream_camera_binding_v2* slot = nullptr;
+    require_status(camstream_camera_hal_get_binding_slot_v2(
+                           &slot, sizeof(camstream_camera_binding_v2), sizeof(camstream_camera_ops_v2)),
+            CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "reject binding claim outside Loading");
+    require(slot == nullptr, "outside-Loading claim returned a binding slot");
+
+    constexpr camstream_camera_status_t expected_statuses[] = {CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT,
+            CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT, CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT,
+            CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED, CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED,
+            CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR};
+    constexpr const char* expected_errors[] = {"missing mandatory callback", "binding size", "operation table",
+            "SPI version", "slot sizes", "camstream_camera_hal_register_backend_v1"};
+    for (int index = 6; index < argc; ++index)
+    {
+        require_status(camstream_camera_hal_load_backend(argv[index]), expected_statuses[index - 6],
+                "reject malformed or legacy backend binding");
+        char diagnostic[256]{};
+        require_status(camstream_camera_hal_get_last_error(diagnostic, sizeof(diagnostic)), CAMSTREAM_CAMERA_STATUS_OK,
+                "copy failed binding diagnostic");
+        require(std::string(diagnostic).find(expected_errors[index - 6]) != std::string::npos,
+                "failed binding diagnostic omitted its cause");
+        camstream_camera* camera = nullptr;
+        require_status(camstream_camera_create(&camera), CAMSTREAM_CAMERA_STATUS_INVALID_STATE,
+                "reject create after failed binding");
+        require(camera == nullptr, "failed binding exposed a camera");
+    }
+}
+
 void test_destroy_before_unload(const std::string& backend_path)
 {
     require_status(camstream_camera_hal_load_backend(backend_path.c_str()), CAMSTREAM_CAMERA_STATUS_OK,
@@ -326,11 +356,12 @@ extern "C" void camstream_test_blocking_backend_destroyed(void)
 
 int main(int argc, char* argv[])
 {
-    if (argc != 6)
+    if (argc != 12)
     {
         std::cerr << "Usage: camstream-camera-hal-regression-tests <simulated-backend-path> "
                      "<no-registration-backend-path> <invalid-descriptor-backend-path> "
-                     "<duplicate-registration-backend-path> <blocking-create-backend-path>\n";
+                     "<duplicate-registration-backend-path> <blocking-create-backend-path> "
+                     "<missing-callback> <small-binding> <small-ops> <incomplete> <capacity-mismatch> <legacy-v1>\n";
         return 2;
     }
 
@@ -341,6 +372,7 @@ int main(int argc, char* argv[])
         const std::string invalid_descriptor_path(argv[3]);
         const std::string duplicate_registration_path(argv[4]);
         const std::string blocking_create_backend_path(argv[5]);
+        test_binding_rejection(argc, argv);
         test_failed_load_recovery(missing_registration_path, invalid_descriptor_path, duplicate_registration_path,
                 simulated_backend_path);
         test_destroy_before_unload(simulated_backend_path);

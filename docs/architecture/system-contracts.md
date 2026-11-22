@@ -43,7 +43,7 @@ flowchart TB
  Kernel/uvcvideo | USB/device/V4L2 kernel plumbing | Application RPC policy |
  V4L2 backend C11 | `device_fd`, ioctl, format/buffer/stream lifecycle, backend error | GStreamer/gRPC |
  Simulated backend C11 | Fake frame descriptors/payloads, deterministic test lifecycle | Physical camera |
- HAL C11 | C ABI, backend registration/loading, owned opaque camera instances, public token mapping, module lifetime | GStreamer/GStreamer symbols, gRPC/C++ STL |
+ HAL C11 | C ABI, backend binding/loading, owned opaque camera instances, public token mapping, module lifetime | GStreamer/GStreamer symbols, gRPC/C++ STL |
  `camstreamsrc` C/GObject | Borrowed HAL access, caps, copy-first GstBuffer/metadata/frame release bridge | HAL instance/module reference; direct device open/ioctl |
  Controller C++17 | GStreamer pipeline state, bus and coordinated teardown | Direct backend fd/queue; HAL instance/module reference |
  CameraService C++17 | HAL instance and backend module client reference, authoritative session state, orchestration, RPC policy | Per-frame V4L2 mechanics |
@@ -61,10 +61,11 @@ The selected legacy revision, exclusions and migration approval scope are mainta
 Protected invariants:
 
 - Camera HAL public C ABI and `camstream_camera_status_t` ABI.
-- Backend operation-table ABI; opaque `camstream_camera_instance*` contract.
+- Backend operation-table contract and opaque `camstream_camera_instance*` ownership. R2 migrates the backend-only
+  registration SPI from v1 to v2 under the later explicit owner decision; it does not change the public HAL ABI.
 - Per-instance backend state; HAL public vs backend internal frame token model.
 - C-compatible status/error codes and exception policy in §4.1.
-- Backend ELF constructor does **registration only**, no device I/O.
+- Backend ELF constructor does **binding injection only**, no device I/O (R2 SPI v2); historical v1 used registration.
 - Destroy instance **before** backend module unload.
 - Maintain create/unload reservation until backend create/destroy transaction complete.
 - Do **not** hold runtime mutex across backend callbacks.
@@ -73,7 +74,14 @@ Protected invariants:
 
 ### 4.1 ABI and exception policy — preserved baseline
 
-Public C ABI and backend SPI retain signatures, field order/types, status representation, opaque handles and function-pointer dispatch. Preserve the actual `abi_version`/`struct_size` checks at each boundary: baseline minimum-size acceptance must not become exact-size equality, and no new reserved-field rejection may be invented. No private state, mutex or C++ type enters the ABI. Binary compatibility verification belongs to [verification §3.1](../engineering/verification-gates.md#31-c11-hal-coreruntime), separately for host and ARM.
+The application-facing public C ABI retains signatures, field order/types, status representation and opaque handles.
+Historical M2/R1-B text required backend SPI v1 parity. The later owner-approved R2 constructor push-binding design is
+an explicit exception for the **backend-only SPI**: v2 replaces descriptor registration with HAL-owned staging and
+operations, while preserving callback signatures and opaque backend instances. Old v1 modules must fail to load rather
+than being interpreted as v2. SPI v2 uses fixed HAL-owned slots and exact size checks; extensions require a new hook.
+Preserve minimum `struct_size` acceptance for unchanged public v1 structures; do not invent
+reserved-field rejection. No private mutex or C++ type enters the public ABI. Binary compatibility verification belongs
+to [verification §3.1](../engineering/verification-gates.md#31-c11-hal-coreruntime), separately for host and ARM.
 
 C++ callbacks must contain their own exceptions and preserve declared signatures/status behavior; void cleanup callbacks remain void and nonthrowing. Pure C11 HAL/runtime/backends require no new C++ bridge to catch callbacks that violate this contract. Retaining defensive C++ catch code is not a requirement to retain C++ runtime dependencies in the C port.
 
@@ -89,8 +97,8 @@ C++ callbacks must contain their own exceptions and preserve declared signatures
 - An unload request releases one client reference. With more than one reference, the baseline decrements it and succeeds even if an instance is live; this is **not** final `dlclose`.
 - On the final reference, live instances or create reservations reject unloading without consuming that reference. With neither present, the runtime enters Unloading and attempts `dlclose`; failed close leaves the runtime faulted, not falsely usable/unloaded. Do not invent retryable success semantics.
 - Take a create reservation under the runtime mutex, invoke create outside it, and atomically convert the reservation to a live instance on success. On failed partial create, destroy the partial instance before canceling its reservation. Preserve protection through destroy completion.
-- Backend callbacks and `dlopen`/`dlclose` execute outside the runtime mutex. Reserve Loading/Unloading state under lock; commit/rollback and wake predicate waiters under the state protocol. Constructor registration may re-enter the runtime.
-- Preserve the actual client/live-instance/create-reservation counters. No new callback-token counter is a C11 parity requirement. Module-owned descriptors/strings/callback addresses cannot be used after final close.
+- Backend callbacks and `dlopen`/`dlclose` execute outside the runtime mutex. Reserve Loading/Unloading state under lock; commit/rollback and wake predicate waiters under the state protocol. Constructor binding injection re-enters the runtime. A load/unload call from the thread performing Loading or Unloading fails with `INVALID_STATE` instead of waiting on itself; other threads continue waiting for the transition. This also applies to destructors run during rejected-load cleanup.
+- Preserve the actual client/live-instance/create-reservation counters. No new callback-token counter is a C11 parity requirement. Staging/module strings and callback addresses cannot be used after final close.
 
 ### 4.4 Per-instance serialization and shutdown — preserved boundary
 
@@ -172,10 +180,21 @@ from frames at a named observation point over a stated interval. `S_FMT`, `S_PAR
 negotiated GstCaps value do not measure delivered FPS. Historical C270 diagnostic results and their limits remain in
 [source evidence](../../SOURCE_EVIDENCE.md) and the selected legacy Stage 6A/7 reports.
 
+**M6 control-plane decision:** the frozen single-camera API is
+[`camstream.control.v1`](../../apps/grpc-control/proto/camera_control.proto), with semantics in the
+[M6 control contract](../../apps/grpc-control/README.md). `camera0` is mapped to a server-supplied capture source;
+the RPC client cannot choose backend or plugin paths. One long-lived CameraService owns HAL and module lifetime;
+the gRPC adapter borrows it and the controller retains pipeline ownership. Every mutating RPC supplies an expected
+service generation, checked under the operation lock. A deadline or lost response does not undo a committed state;
+clients reconcile through GetStatus. The server defaults to plaintext loopback; remote plaintext requires an explicit
+trusted-lab opt-in. M6 carries control only, with no remote media endpoint. Host and ARM evidence is recorded in the
+[M6 verification report](../development/m6-grpc-control.md); BBB remote acceptance remains separate.
+
 **DEFERRED WITH REASON:** freeze codec and network transport at M7 after a bounded BBB-to-laptop comparison of
 available elements, delivered FPS, drops, latency, CPU/RSS, bandwidth and USB events; RTP/UDP remains a candidate.
-Set product performance thresholds before that acceptance run. Choose production listener security before remote
-deployment at M6/M7, based on the actual LAN exposure policy and measured gRPC dependency footprint. Optional
+Set product performance thresholds before that acceptance run. Choose production listener security before deployment
+outside the explicitly opted-in trusted lab, based on the actual LAN exposure policy and measured gRPC dependency
+footprint. Optional
 zero-copy needs a separate lease/serialization design and measurements after M4 copy-first behavior works. Advanced
 automatic recovery waits for a demonstrated requirement and a resolution policy for `STAGE7-USB-01`; initial fault
 handling reports status and requires explicit restart. These deferred choices do not block an independent M1 skeleton

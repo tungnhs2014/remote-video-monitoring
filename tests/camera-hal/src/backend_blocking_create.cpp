@@ -142,29 +142,21 @@ extern "C"
 
 } // extern "C"
 
-const camstream_camera_backend_v1 kBackendDescriptor{
-        CAMSTREAM_CAMERA_ABI_VERSION_V1,
-        sizeof(camstream_camera_backend_v1),
-        kBackendName,
-        blocking_create,
-        blocking_destroy,
-        blocking_open,
-        blocking_close,
-        blocking_get_capabilities,
-        blocking_get_stream_configuration,
-        blocking_configure,
-        blocking_start,
-        blocking_wait_frame,
-        blocking_acquire_frame,
-        blocking_release_frame,
-        blocking_stop,
-        blocking_get_last_error,
-        {},
-};
-
 } // namespace
 
 __attribute__((constructor)) static void register_blocking_backend() noexcept
 {
-    static_cast<void>(camstream_camera_hal_register_backend_v1(&kBackendDescriptor));
+    camstream_camera_binding_v2* binding = nullptr;
+    if (camstream_camera_hal_get_binding_slot_v2(&binding, sizeof(camstream_camera_binding_v2),
+                sizeof(camstream_camera_ops_v2)) != CAMSTREAM_CAMERA_STATUS_OK)
+    {
+        return;
+    }
+    *binding->control_funcs = {sizeof(camstream_camera_ops_v2), blocking_create, blocking_destroy, blocking_open,
+            blocking_close, blocking_get_capabilities, blocking_get_stream_configuration, blocking_configure,
+            blocking_start, blocking_wait_frame, blocking_acquire_frame, blocking_release_frame, blocking_stop,
+            blocking_get_last_error, {}};
+    binding->backend_name = kBackendName;
+    binding->struct_size = sizeof(*binding);
+    binding->abi_version = CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2;
 }

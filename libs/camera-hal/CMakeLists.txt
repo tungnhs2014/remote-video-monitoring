@@ -1,20 +1,21 @@
-find_package(Threads REQUIRED)
+FIND_PACKAGE(Threads REQUIRED)
 
-add_library(camstream-camera-hal SHARED
+ADD_LIBRARY(camstream-camera-hal SHARED
     src/camera_backend_runtime.c
     src/camera_core.c
     src/camera_hal.c
 )
-set_source_files_properties(src/camera_core.c PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
-add_library(camstream::camera-hal ALIAS camstream-camera-hal)
+SET_SOURCE_FILES_PROPERTIES(src/camera_core.c PROPERTIES COMPILE_OPTIONS "-fvisibility=hidden")
+ADD_LIBRARY(camstream::camera-hal ALIAS camstream-camera-hal)
 
-target_include_directories(camstream-camera-hal PUBLIC
+TARGET_INCLUDE_DIRECTORIES(camstream-camera-hal PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_compile_features(camstream-camera-hal PUBLIC c_std_11)
-target_compile_options(camstream-camera-hal PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(camstream-camera-hal PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+TARGET_COMPILE_FEATURES(camstream-camera-hal PUBLIC c_std_11)
+TARGET_COMPILE_OPTIONS(camstream-camera-hal PRIVATE -Wall -Wextra -Wpedantic)
+TARGET_LINK_LIBRARIES(camstream-camera-hal PRIVATE ${CMAKE_DL_LIBS} Threads::Threads camstream::common-log)
+TARGET_LINK_OPTIONS(camstream-camera-hal PRIVATE -Wl,--exclude-libs,libcamstream-common-log.a)
 
-install(TARGETS camstream-camera-hal LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+INSTALL(TARGETS camstream-camera-hal LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+INSTALL(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

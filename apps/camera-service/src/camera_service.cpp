@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace camstream
@@ -15,9 +16,8 @@ namespace
 
 bool same_request(const camstream_camera_stream_config_v1& left, const camstream_camera_stream_config_v1& right)
 {
-    return std::strcmp(left.source_identifier, right.source_identifier) == 0 && left.width == right.width &&
-           left.height == right.height && left.pixel_format == right.pixel_format &&
-           left.frame_rate_numerator == right.frame_rate_numerator &&
+    return std::strcmp(left.source_identifier, right.source_identifier) == 0 && left.width == right.width && left.height == right.height &&
+           left.pixel_format == right.pixel_format && left.frame_rate_numerator == right.frame_rate_numerator &&
            left.frame_rate_denominator == right.frame_rate_denominator;
 }
 
@@ -62,18 +62,57 @@ CameraServiceResult CameraService::hal_failure(const char* operation, camstream_
     return {false, code, std::string(operation) + " failed: " + detail};
 }
 
+CameraServiceResult CameraService::check_generation_locked(std::optional<std::uint64_t> expected_generation) const
+{
+    if (expected_generation && *expected_generation != generation_)
+    {
+        return {false, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "stale camera generation; query GetStatus"};
+    }
+    return success();
+}
+
+CameraServiceResult CameraService::finish_locked(CameraServiceOperation operation, CameraServiceState previous, CameraServiceResult result)
+{
+    if (state_ != previous && generation_ != std::numeric_limits<std::uint64_t>::max())
+    {
+        ++generation_;
+    }
+    last_operation_ = operation;
+    last_operation_success_ = result.success;
+    last_operation_status_ = result.hal_status;
+    last_error_ = result.success ? std::string{} : result.detail;
+    if (result.success)
+    {
+        result.committed_status = CameraServiceStatus{state_, requested_, active_, controller_.frames(), generation_, last_operation_,
+                last_operation_success_, last_operation_status_, last_error_};
+    }
+    return result;
+}
+
 CameraServiceResult CameraService::configure(const std::string& backend_path, const std::string& plugin_path,
-        const camstream_camera_stream_config_v1& requested)
+        const camstream_camera_stream_config_v1& requested, std::optional<std::uint64_t> expected_generation)
 {
     std::lock_guard<std::mutex> operation(operation_mutex_);
+#ifdef CAMSTREAM_M6_TESTING
+    if (before_configure_hook_)
+    {
+        before_configure_hook_();
+    }
+#endif
+    const CameraServiceState previous = state_;
+    const CameraServiceResult generation_check = check_generation_locked(expected_generation);
+    if (!generation_check.success)
+    {
+        return finish_locked(CameraServiceOperation::Configure, previous, generation_check);
+    }
     const bool rollback_on_exception = state_ == CameraServiceState::Idle && !module_loaded_;
     try
     {
-        return configure_locked(backend_path, plugin_path, requested);
+        return finish_locked(CameraServiceOperation::Configure, previous, configure_locked(backend_path, plugin_path, requested));
     }
     catch (...)
     {
-        if (rollback_on_exception)
+        if (rollback_on_exception && state_ != CameraServiceState::Configured)
         {
             try
             {
@@ -88,8 +127,16 @@ CameraServiceResult CameraService::configure(const std::string& backend_path, co
     }
 }
 
-CameraServiceResult CameraService::configure_locked(const std::string& backend_path, const std::string& plugin_path,
-        const camstream_camera_stream_config_v1& requested)
+#ifdef CAMSTREAM_M6_TESTING
+void CameraService::set_before_configure_hook(std::function<void()> hook)
+{
+    std::lock_guard<std::mutex> operation(operation_mutex_);
+    before_configure_hook_ = std::move(hook);
+}
+#endif
+
+CameraServiceResult CameraService::configure_locked(
+        const std::string& backend_path, const std::string& plugin_path, const camstream_camera_stream_config_v1& requested)
 {
     if (backend_path.empty() || plugin_path.empty() ||
             std::memchr(requested.source_identifier, '\0', sizeof(requested.source_identifier)) == nullptr ||
@@ -153,17 +200,23 @@ CameraServiceResult CameraService::configure_locked(const std::string& backend_p
     return success();
 }
 
-CameraServiceResult CameraService::start()
+CameraServiceResult CameraService::start(std::optional<std::uint64_t> expected_generation)
 {
     std::lock_guard<std::mutex> operation(operation_mutex_);
+    const CameraServiceState previous = state_;
+    const CameraServiceResult generation_check = check_generation_locked(expected_generation);
+    if (!generation_check.success)
+    {
+        return finish_locked(CameraServiceOperation::Start, previous, generation_check);
+    }
     const bool rollback_on_exception = state_ == CameraServiceState::Configured && camera_ != nullptr;
     try
     {
-        return start_locked();
+        return finish_locked(CameraServiceOperation::Start, previous, start_locked());
     }
     catch (...)
     {
-        if (rollback_on_exception)
+        if (rollback_on_exception && state_ != CameraServiceState::Streaming)
         {
             try
             {
@@ -284,10 +337,115 @@ CameraServiceResult CameraService::stop_locked()
     return first;
 }
 
-CameraServiceResult CameraService::stop()
+CameraServiceResult CameraService::stop(std::optional<std::uint64_t> expected_generation)
 {
     std::lock_guard<std::mutex> operation(operation_mutex_);
-    return stop_locked();
+    const CameraServiceState previous = state_;
+    const CameraServiceResult generation_check = check_generation_locked(expected_generation);
+    if (!generation_check.success)
+    {
+        return finish_locked(CameraServiceOperation::Stop, previous, generation_check);
+    }
+    return finish_locked(CameraServiceOperation::Stop, previous, stop_locked());
+}
+
+CameraServiceCapabilities CameraService::discover(const std::string& backend_path, const std::string& source_identifier)
+{
+    std::lock_guard<std::mutex> operation(operation_mutex_);
+    const CameraServiceState previous = state_;
+    if (state_ != CameraServiceState::Idle || module_loaded_)
+    {
+        return {finish_locked(CameraServiceOperation::Discover, previous,
+                        {false, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "capability discovery requires Idle"}),
+                0U, {}};
+    }
+    if (backend_path.empty() || source_identifier.empty() || source_identifier.size() >= CAMSTREAM_CAMERA_MAX_SOURCE_ID_SIZE)
+    {
+        return {finish_locked(CameraServiceOperation::Discover, previous,
+                        {false, CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT, "invalid backend or source identifier"}),
+                0U, {}};
+    }
+
+    CameraServiceCapabilities discovered{success(), 0U, {}};
+    try
+    {
+        backend_path_ = backend_path;
+        camstream_camera_status_t code = camstream_camera_hal_load_backend(backend_path_.c_str());
+        if (code == CAMSTREAM_CAMERA_STATUS_OK)
+        {
+            module_loaded_ = true;
+            code = camstream_camera_create(&camera_);
+        }
+        if (code == CAMSTREAM_CAMERA_STATUS_OK)
+        {
+            code = camstream_camera_open(camera_, source_identifier.c_str());
+            opened_ = code == CAMSTREAM_CAMERA_STATUS_OK;
+        }
+        if (code == CAMSTREAM_CAMERA_STATUS_OK)
+        {
+            camstream_camera_capabilities_v1 capabilities{};
+            capabilities.abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1;
+            capabilities.struct_size = sizeof(capabilities);
+            code = camstream_camera_get_capabilities(camera_, &capabilities);
+            if (code == CAMSTREAM_CAMERA_STATUS_OK)
+            {
+                if (capabilities.stream_config_count > 128U)
+                {
+                    discovered.result = {false, CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR, "too many camera modes"};
+                }
+                else
+                {
+                    discovered.maximum_plane_count = capabilities.maximum_plane_count;
+                    discovered.modes.reserve(capabilities.stream_config_count);
+                    for (std::uint32_t index = 0U; index < capabilities.stream_config_count; ++index)
+                    {
+                        camstream_camera_stream_config_v1 mode{};
+                        mode.abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1;
+                        mode.struct_size = sizeof(mode);
+                        code = camstream_camera_get_stream_configuration(camera_, index, &mode);
+                        if (code != CAMSTREAM_CAMERA_STATUS_OK)
+                        {
+                            break;
+                        }
+                        discovered.modes.push_back(mode);
+                    }
+                }
+            }
+        }
+        if (code != CAMSTREAM_CAMERA_STATUS_OK)
+        {
+            discovered.result = hal_failure("discover", code);
+        }
+        if (module_loaded_)
+        {
+            const CameraServiceResult cleanup = stop_locked();
+            if (!cleanup.success && discovered.result.success)
+            {
+                discovered.result = cleanup;
+            }
+            else if (!cleanup.success)
+            {
+                discovered.result.detail += "; cleanup: " + cleanup.detail;
+            }
+        }
+        discovered.result = finish_locked(CameraServiceOperation::Discover, previous, std::move(discovered.result));
+        return discovered;
+    }
+    catch (...)
+    {
+        if (module_loaded_)
+        {
+            try
+            {
+                (void)stop_locked();
+            }
+            catch (...)
+            {
+                // Retain ownership for the service destructor's cleanup attempt.
+            }
+        }
+        throw;
+    }
 }
 
 CameraServiceStatus CameraService::status()
@@ -300,9 +458,14 @@ CameraServiceStatus CameraService::status()
         {
             state_ = CameraServiceState::Faulted;
             last_error_ = bus_error;
+            if (generation_ != std::numeric_limits<std::uint64_t>::max())
+            {
+                ++generation_;
+            }
         }
     }
-    return {state_, active_, controller_.frames(), last_error_};
+    return {state_, requested_, active_, controller_.frames(), generation_, last_operation_, last_operation_success_,
+            last_operation_status_, last_error_};
 }
 
 } // namespace camstream

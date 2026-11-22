@@ -48,13 +48,13 @@ Development is organized into incremental milestones.
 | R1 — architecture and coding-style adoption | Local interface/documentation update; BBB after R1 NOT RUN |
 | R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB 2 × 30-frame C270 functional smoke owner-reported PASS |
 | M5 — CameraService and GStreamerController | Host and ARM build locally verified; BBB NOT RUN |
-| gRPC remote control | Planned |
+| M6 — gRPC remote control | Host/ARM locally verified; BBB remote acceptance NOT RUN |
 | BeagleBone Black hardware validation | M3 and M4-B functional smoke owner-reported PASS; USB/MUSB reliability open |
 
 The V4L2 backend implements YUYV configuration and MMAP streaming through Camera HAL. The M4-A plugin copies frames
 into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 USB/MUSB reset issue with an
-unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. Remote control and network
-media delivery are not implemented.
+unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. The M6 gRPC control server and
+client are locally implemented and verified; laptop-to-BBB control is NOT RUN. Network media delivery belongs to M7.
 
 ## 4. Build and Test
 
@@ -77,10 +77,12 @@ ctest --test-dir build --output-on-failure
 
 ARM cross-compilation is supported through the existing CMake build system.
 
-The saved Buildroot defconfig selects GStreamer for the ARM toolchain. Build the M4-B session-owner
+The saved Buildroot defconfig selects GStreamer and M6 gRPC dependencies for the ARM toolchain. Build the M4-B session-owner
 harness with `-DCAMSTREAM_M4_SESSION_SMOKE=ON`. The harness accepts a backend module, plugin module,
 source identifier, YUYV mode, frame count and cycle count. An ARM cross-build does not establish
 plugin runtime behavior on the board.
+
+For M6 gRPC host/ARM evidence and owner-operated BBB commands, see the [M6 verification report](docs/development/m6-grpc-control.md).
 
 ## 5. Verification
 

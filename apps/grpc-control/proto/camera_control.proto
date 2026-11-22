@@ -1,0 +1,116 @@
+syntax = "proto3";
+
+package camstream.control.v1;
+
+service CameraControl
+{
+    rpc ListCameras(ListCamerasRequest) returns (ListCamerasReply);
+    rpc GetCapabilities(CameraRequest) returns (GetCapabilitiesReply);
+    rpc GetStatus(CameraRequest) returns (CameraStatus);
+    rpc ConfigureCamera(ConfigureCameraRequest) returns (CameraStatus);
+    rpc StartStream(TransitionRequest) returns (CameraStatus);
+    rpc StopStream(TransitionRequest) returns (CameraStatus);
+}
+
+message ListCamerasRequest {}
+
+message CameraRequest
+{
+    string camera_id = 1;
+}
+
+message CameraInfo
+{
+    string camera_id = 1;
+    string source_identifier = 2;
+}
+
+message ListCamerasReply
+{
+    repeated CameraInfo cameras = 1;
+}
+
+enum PixelFormat
+{
+    PIXEL_FORMAT_UNSPECIFIED = 0;
+    PIXEL_FORMAT_YUYV = 1;
+}
+
+message FrameRate
+{
+    uint32 numerator = 1;
+    uint32 denominator = 2;
+}
+
+message StreamMode
+{
+    uint32 width = 1;
+    uint32 height = 2;
+    PixelFormat pixel_format = 3;
+    FrameRate frame_rate = 4;
+}
+
+message GetCapabilitiesReply
+{
+    string camera_id = 1;
+    repeated StreamMode modes = 2;
+    uint32 maximum_plane_count = 3;
+}
+
+message ConfigureCameraRequest
+{
+    string camera_id = 1;
+    StreamMode requested = 2;
+    oneof generation_precondition
+    {
+        uint64 expected_generation = 3;
+    }
+}
+
+message TransitionRequest
+{
+    string camera_id = 1;
+    oneof generation_precondition
+    {
+        uint64 expected_generation = 2;
+    }
+}
+
+enum CameraState
+{
+    CAMERA_STATE_UNSPECIFIED = 0;
+    CAMERA_STATE_IDLE = 1;
+    CAMERA_STATE_CONFIGURED = 2;
+    CAMERA_STATE_STREAMING = 3;
+    CAMERA_STATE_FAULTED = 4;
+}
+
+enum CameraOperation
+{
+    CAMERA_OPERATION_UNSPECIFIED = 0;
+    CAMERA_OPERATION_CONFIGURE = 1;
+    CAMERA_OPERATION_START = 2;
+    CAMERA_OPERATION_STOP = 3;
+    CAMERA_OPERATION_DISCOVER = 4;
+}
+
+message LastOperation
+{
+    CameraOperation operation = 1;
+    bool success = 2;
+    int32 hal_status = 3;
+    string error = 4;
+}
+
+message CameraStatus
+{
+    string camera_id = 1;
+    CameraState state = 2;
+    StreamMode requested = 3;
+    StreamMode active = 4;
+    uint64 generation = 5;
+    uint64 local_pipeline_frames = 6;
+    LastOperation last_operation = 7;
+    string last_error = 8;
+    bool stream_active = 9;
+}

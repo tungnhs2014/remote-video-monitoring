@@ -1,5 +1,8 @@
 #include "camera_backend_runtime.h"
 
+#define CAMSTREAM_LOG_MODULE "camera-hal-runtime"
+#include <camstream/common/log.h>
+
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -22,7 +25,11 @@ typedef struct backend_runtime
     pthread_cond_t state_changed;
     runtime_state state;
     void* module_handle;
-    const camstream_camera_backend_v1* backend;
+    camstream_camera_binding_v2 staging;
+    camstream_camera_ops_v2 staging_ops;
+    camstream_camera_binding_v2 active;
+    camstream_camera_ops_v2 active_ops;
+    pthread_t transition_thread;
     char* backend_name;
     char* backend_path;
     char* last_error;
@@ -145,7 +152,10 @@ static void clear_error_locked(void)
 static void reset_loaded_locked(void)
 {
     runtime.module_handle = NULL;
-    runtime.backend = NULL;
+    memset(&runtime.staging, 0, sizeof(runtime.staging));
+    memset(&runtime.staging_ops, 0, sizeof(runtime.staging_ops));
+    memset(&runtime.active, 0, sizeof(runtime.active));
+    memset(&runtime.active_ops, 0, sizeof(runtime.active_ops));
     free(runtime.backend_name);
     runtime.backend_name = NULL;
     free(runtime.backend_path);
@@ -157,57 +167,63 @@ static void reset_loaded_locked(void)
     runtime.create_reservation_count = 0U;
 }
 
-static bool callbacks_complete(const camstream_camera_backend_v1* backend)
+static bool callbacks_complete(const camstream_camera_ops_v2* operations)
 {
-    return backend->create != NULL && backend->destroy != NULL && backend->open != NULL && backend->close != NULL &&
-           backend->get_capabilities != NULL && backend->get_stream_configuration != NULL &&
-           backend->configure != NULL && backend->start != NULL && backend->wait_frame != NULL &&
-           backend->acquire_frame != NULL && backend->release_frame != NULL && backend->stop != NULL &&
-           backend->get_last_error != NULL;
+    return operations->camera_create != NULL && operations->camera_destroy != NULL && operations->camera_open != NULL &&
+           operations->camera_close != NULL && operations->camera_get_capabilities != NULL &&
+           operations->camera_get_stream_configuration != NULL && operations->camera_configure != NULL &&
+           operations->camera_start != NULL && operations->camera_wait_frame != NULL && operations->camera_acquire_frame != NULL &&
+           operations->camera_release_frame != NULL && operations->camera_stop != NULL && operations->camera_get_last_error != NULL;
 }
 
-static camstream_camera_status_t validate_backend(const camstream_camera_backend_v1* backend, const char** error)
+static camstream_camera_status_t validate_binding(const camstream_camera_binding_v2* binding, const char** error)
 {
-    if (backend == NULL)
+    if (binding->abi_version != CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2)
     {
-        *error = "backend registration supplied a null descriptor";
-        return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
-    }
-    if (backend->abi_version != CAMSTREAM_CAMERA_ABI_VERSION_V1)
-    {
-        *error = "backend ABI version does not match Camera HAL ABI v1";
+        *error = "backend SPI version does not match Camera HAL binding v2";
         return CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
     }
-    if (backend->struct_size < sizeof(*backend))
+    if (binding->struct_size != sizeof(*binding) || binding->control_funcs != &runtime.staging_ops)
     {
-        *error = "backend descriptor is smaller than ABI v1";
+        *error = "backend binding size or HAL-owned operation slot is invalid";
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    if (backend->backend_name == NULL)
+    if (binding->control_funcs->struct_size != sizeof(runtime.staging_ops))
+    {
+        *error = "backend operation table size does not match SPI v2";
+        return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
+    }
+    if (binding->backend_name == NULL)
     {
         *error = "backend name is null";
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    const size_t length = bounded_length(backend->backend_name, 128U);
+    const size_t length = bounded_length(binding->backend_name, 128U);
     if (length == 0U || length > 127U)
     {
         *error = "backend name is empty or not bounded";
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    if (!callbacks_complete(backend))
+    if (!callbacks_complete(binding->control_funcs))
     {
-        *error = "backend descriptor has a missing mandatory callback";
+        *error = "backend binding has a missing mandatory callback";
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
-static void await_transition_locked(void)
+static bool await_transition_locked(void)
 {
     while (runtime.state == RUNTIME_LOADING || runtime.state == RUNTIME_UNLOADING)
     {
+        if (pthread_equal(runtime.transition_thread, pthread_self()))
+        {
+            set_error_locked("recursive camera backend load/unload during module transition");
+            return false;
+        }
         runtime_wait();
     }
+    return true;
 }
 
 static bool finish_failed_load(void* handle, const char* error)
@@ -229,12 +245,17 @@ static bool finish_failed_load(void* handle, const char* error)
     runtime.live_instance_count = 0U;
     runtime.create_reservation_count = 0U;
     runtime.state = RUNTIME_UNLOADING;
+    runtime.transition_thread = pthread_self();
     set_error_locked(error);
     runtime_unlock();
 
     dlerror();
     const int result = dlclose(handle);
     const char* close_error = result == 0 ? NULL : dlerror();
+    if (result != 0)
+    {
+        CAM_LOGE("failed to close rejected backend module: %s", close_error != NULL ? close_error : "unknown error");
+    }
     runtime_lock();
     if (result == 0)
     {
@@ -244,12 +265,12 @@ static bool finish_failed_load(void* handle, const char* error)
     }
     else
     {
-        runtime.backend = NULL;
+        memset(&runtime.active, 0, sizeof(runtime.active));
+        memset(&runtime.active_ops, 0, sizeof(runtime.active_ops));
         runtime.registration_status = CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
         runtime.registration_attempted = false;
         runtime.state = RUNTIME_FAULTED;
-        set_error_parts_locked(
-                error, "; cleanup dlclose failed: ", close_error != NULL ? close_error : "unknown error", "");
+        set_error_parts_locked(error, "; cleanup dlclose failed: ", close_error != NULL ? close_error : "unknown error", "");
     }
     runtime_notify();
     runtime_unlock();
@@ -273,7 +294,12 @@ camstream_camera_status_t camstream_runtime_load_backend(const char* backend_pat
     }
 
     runtime_lock();
-    await_transition_locked();
+    if (!await_transition_locked())
+    {
+        runtime_unlock();
+        free(path_copy);
+        return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
+    }
     if (runtime.state == RUNTIME_FAULTED)
     {
         runtime_unlock();
@@ -302,13 +328,18 @@ camstream_camera_status_t camstream_runtime_load_backend(const char* backend_pat
         return status;
     }
 
-    runtime.backend = NULL;
+    memset(&runtime.staging, 0, sizeof(runtime.staging));
+    memset(&runtime.staging_ops, 0, sizeof(runtime.staging_ops));
+    memset(&runtime.active, 0, sizeof(runtime.active));
+    memset(&runtime.active_ops, 0, sizeof(runtime.active_ops));
+    runtime.staging.control_funcs = &runtime.staging_ops;
     free(runtime.backend_name);
     runtime.backend_name = NULL;
     runtime.backend_path = path_copy;
     runtime.registration_status = CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
     runtime.registration_attempted = false;
-    set_error_locked("backend constructor did not register a descriptor");
+    runtime.transition_thread = pthread_self();
+    set_error_locked("backend constructor did not claim the HAL binding slot");
     runtime.state = RUNTIME_LOADING;
     runtime_unlock();
 
@@ -318,23 +349,50 @@ camstream_camera_status_t camstream_runtime_load_backend(const char* backend_pat
     if (handle == NULL)
     {
         const char* loader_error = dlerror();
+        CAM_LOGE("dlopen failed for backend '%s': %s", backend_path, loader_error != NULL ? loader_error : "unknown error");
         finish_failed_load(NULL, loader_error != NULL ? loader_error : "dlopen failed");
         return CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
     }
 
     runtime_lock();
     camstream_camera_status_t status = runtime.registration_status;
-    if (status == CAMSTREAM_CAMERA_STATUS_OK && runtime.backend != NULL)
+    if (status == CAMSTREAM_CAMERA_STATUS_OK && runtime.registration_attempted)
     {
-        runtime.module_handle = handle;
-        runtime.client_count = 1U;
-        runtime.live_instance_count = 0U;
-        runtime.create_reservation_count = 0U;
-        runtime.state = RUNTIME_LOADED;
-        clear_error_locked();
-        runtime_notify();
-        runtime_unlock();
-        return CAMSTREAM_CAMERA_STATUS_OK;
+        const char* validation_error = NULL;
+        status = validate_binding(&runtime.staging, &validation_error);
+        if (status == CAMSTREAM_CAMERA_STATUS_OK)
+        {
+            runtime.backend_name = duplicate_text(runtime.staging.backend_name);
+            if (runtime.backend_name == NULL)
+            {
+                status = CAMSTREAM_CAMERA_STATUS_INTERNAL_ERROR;
+                set_error_locked("backend name allocation failed");
+            }
+            else
+            {
+                runtime.active_ops = runtime.staging_ops;
+                runtime.active = runtime.staging;
+                runtime.active.backend_name = runtime.backend_name;
+                runtime.active.control_funcs = &runtime.active_ops;
+                memset(&runtime.staging, 0, sizeof(runtime.staging));
+                memset(&runtime.staging_ops, 0, sizeof(runtime.staging_ops));
+                runtime.module_handle = handle;
+                runtime.client_count = 1U;
+                runtime.live_instance_count = 0U;
+                runtime.create_reservation_count = 0U;
+                runtime.state = RUNTIME_LOADED;
+                clear_error_locked();
+                CAM_LOGI("loaded backend '%s' through SPI v2 binding", runtime.backend_name);
+                runtime_notify();
+                runtime_unlock();
+                return CAMSTREAM_CAMERA_STATUS_OK;
+            }
+        }
+        else
+        {
+            set_error_locked(validation_error);
+            CAM_LOGE("invalid backend binding: %s", validation_error);
+        }
     }
 
     char* error_copy = duplicate_text(runtime.last_error != NULL ? runtime.last_error : "backend registration failed");
@@ -350,7 +408,11 @@ camstream_camera_status_t camstream_runtime_load_backend(const char* backend_pat
 camstream_camera_status_t camstream_runtime_unload_backend(void)
 {
     runtime_lock();
-    await_transition_locked();
+    if (!await_transition_locked())
+    {
+        runtime_unlock();
+        return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
+    }
     if (runtime.state == RUNTIME_FAULTED)
     {
         runtime_unlock();
@@ -377,7 +439,8 @@ camstream_camera_status_t camstream_runtime_unload_backend(void)
     if (runtime.module_handle == NULL)
     {
         runtime.client_count = 0U;
-        runtime.backend = NULL;
+        memset(&runtime.active, 0, sizeof(runtime.active));
+        memset(&runtime.active_ops, 0, sizeof(runtime.active_ops));
         runtime.state = RUNTIME_FAULTED;
         set_error_locked("loaded camera backend has no owned module handle");
         runtime_notify();
@@ -388,11 +451,16 @@ camstream_camera_status_t camstream_runtime_unload_backend(void)
     void* handle = runtime.module_handle;
     runtime.client_count = 0U;
     runtime.state = RUNTIME_UNLOADING;
+    runtime.transition_thread = pthread_self();
     runtime_unlock();
 
     dlerror();
     const int result = dlclose(handle);
     const char* close_error = result == 0 ? NULL : dlerror();
+    if (result != 0)
+    {
+        CAM_LOGE("failed to unload backend module: %s", close_error != NULL ? close_error : "unknown error");
+    }
     runtime_lock();
     if (result == 0)
     {
@@ -402,12 +470,13 @@ camstream_camera_status_t camstream_runtime_unload_backend(void)
     }
     else
     {
-        runtime.backend = NULL;
+        memset(&runtime.active, 0, sizeof(runtime.active));
+        memset(&runtime.active_ops, 0, sizeof(runtime.active_ops));
         runtime.registration_status = CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
         runtime.registration_attempted = false;
         runtime.state = RUNTIME_FAULTED;
-        set_error_parts_locked("dlclose failed for camera backend '", runtime.backend_path,
-                "': ", close_error != NULL ? close_error : "unknown error");
+        set_error_parts_locked(
+                "dlclose failed for camera backend '", runtime.backend_path, "': ", close_error != NULL ? close_error : "unknown error");
     }
     runtime_notify();
     runtime_unlock();
@@ -441,17 +510,17 @@ void camstream_runtime_set_error(const char* error)
     runtime_unlock();
 }
 
-camstream_camera_status_t camstream_runtime_reserve_create(const camstream_camera_backend_v1** backend)
+camstream_camera_status_t camstream_runtime_reserve_create(const camstream_camera_binding_v2** binding)
 {
-    if (backend == NULL)
+    if (binding == NULL)
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    *backend = NULL;
+    *binding = NULL;
     runtime_lock();
     camstream_camera_status_t status = CAMSTREAM_CAMERA_STATUS_OK;
     if (runtime.state != RUNTIME_LOADED || runtime.client_count == 0U || runtime.module_handle == NULL ||
-            runtime.backend == NULL)
+            runtime.active.control_funcs != &runtime.active_ops)
     {
         status = CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
@@ -462,7 +531,7 @@ camstream_camera_status_t camstream_runtime_reserve_create(const camstream_camer
     else
     {
         ++runtime.create_reservation_count;
-        *backend = runtime.backend;
+        *binding = &runtime.active;
     }
     runtime_unlock();
     return status;
@@ -473,7 +542,7 @@ camstream_camera_status_t camstream_runtime_commit_create(void)
     runtime_lock();
     camstream_camera_status_t status = CAMSTREAM_CAMERA_STATUS_OK;
     if (runtime.state != RUNTIME_LOADED || runtime.client_count == 0U || runtime.module_handle == NULL ||
-            runtime.backend == NULL || runtime.create_reservation_count == 0U)
+            runtime.active.control_funcs != &runtime.active_ops || runtime.create_reservation_count == 0U)
     {
         status = CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
@@ -495,7 +564,7 @@ camstream_camera_status_t camstream_runtime_cancel_create(void)
     runtime_lock();
     camstream_camera_status_t status = CAMSTREAM_CAMERA_STATUS_OK;
     if (runtime.state != RUNTIME_LOADED || runtime.client_count == 0U || runtime.module_handle == NULL ||
-            runtime.backend == NULL || runtime.create_reservation_count == 0U)
+            runtime.active.control_funcs != &runtime.active_ops || runtime.create_reservation_count == 0U)
     {
         status = CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
@@ -517,48 +586,44 @@ void camstream_runtime_record_destroy(void)
     runtime_unlock();
 }
 
-camstream_camera_status_t camstream_camera_hal_register_backend_v1(const camstream_camera_backend_v1* backend)
+camstream_camera_status_t camstream_camera_hal_get_binding_slot_v2(
+        camstream_camera_binding_v2** binding, uint32_t binding_size, uint32_t operations_size)
 {
+    if (binding == NULL)
+    {
+        return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
+    }
+    *binding = NULL;
     runtime_lock();
     if (runtime.state == RUNTIME_FAULTED)
     {
         runtime_unlock();
         return CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
     }
-    if (runtime.state != RUNTIME_LOADING)
+    if (runtime.state != RUNTIME_LOADING || !pthread_equal(runtime.transition_thread, pthread_self()))
     {
-        set_error_locked("backend registration is valid only during HAL loading");
         runtime_unlock();
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
     if (runtime.registration_attempted)
     {
         runtime.registration_status = CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
-        set_error_locked("backend constructor registered more than once during one load");
+        set_error_locked("backend constructor claimed the binding slot more than once");
+        CAM_LOGE("duplicate backend binding claim");
         runtime_unlock();
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
+    if (binding_size != sizeof(runtime.staging) || operations_size != sizeof(runtime.staging_ops))
+    {
+        runtime.registration_attempted = true;
+        runtime.registration_status = CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
+        set_error_locked("backend SPI v2 slot sizes do not match the HAL-owned storage");
+        runtime_unlock();
+        return CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
+    }
     runtime.registration_attempted = true;
-    const char* error = NULL;
-    camstream_camera_status_t status = validate_backend(backend, &error);
-    if (status != CAMSTREAM_CAMERA_STATUS_OK)
-    {
-        runtime.registration_status = status;
-        set_error_locked(error);
-        runtime_unlock();
-        return status;
-    }
-    runtime.backend_name = duplicate_text(backend->backend_name);
-    if (runtime.backend_name == NULL)
-    {
-        runtime.registration_status = CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
-        set_error_locked("backend name allocation failed");
-        runtime_unlock();
-        return CAMSTREAM_CAMERA_STATUS_INTERNAL_ERROR;
-    }
-    runtime.backend = backend;
     runtime.registration_status = CAMSTREAM_CAMERA_STATUS_OK;
-    clear_error_locked();
+    *binding = &runtime.staging;
     runtime_unlock();
     return CAMSTREAM_CAMERA_STATUS_OK;
 }

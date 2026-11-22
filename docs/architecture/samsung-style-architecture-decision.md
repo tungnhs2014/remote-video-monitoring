@@ -1,4 +1,86 @@
-# RVM Architecture Decision — Samsung-Inspired Layering (V3 / R1-B)
+# RVM Architecture Decision — Samsung-Inspired Layering (R2 update; R1-B history retained)
+
+## R2 decision — constructor push binding (2026-11-21)
+
+This section supersedes the R1-B **backend registration mechanism** below. R1-B history remains for provenance. The
+owner-approved R2 change migrates the backend SPI to v2; the application-facing `camera_hal.h` ABI stays at v1.
+The complete supplied Samsung `docs.zip` was reviewed before R2 source edits (11 Markdown documents and four C/C++
+examples; SHA-256 `042c33c82b88efc9b6faacd0582376ef402769b31667be9d47e9fe9d92d2e16b`). Its HDMI examples show
+PPI `dlopen()` → ELF constructor → `get_backend_data_address()` → `control_funcs` injection → version finalized last.
+That is source-derived reference behavior, not a universal Samsung coding standard or a safety proof. RVM adds loader
+thread restriction, isolated staging, full validation and transactional publication.
+
+### R2-A assessment and transaction
+
+| Topic | M5 baseline | R2 decision |
+|---|---|---|
+| Call flow | Application → public HAL → Core → module-owned v1 descriptor → backend → V4L2 userspace → kernel | Core dispatches through one HAL-owned active v2 binding |
+| Constructor | Registers address of a static descriptor | Claims HAL-owned staging slot, fills operations, then sets name/size/version |
+| Loader | Validates descriptor during registration | Sets Loading and staging before `dlopen`; validates after `dlopen` returns; publishes only a complete copy |
+| SPI | `camstream_camera_backend_v1` + `camstream_camera_hal_register_backend_v1` | `camstream_camera_binding_v2`, `camstream_camera_ops_v2`, `camstream_camera_hal_get_binding_slot_v2` |
+| Public HAL ABI | `camera_hal.h` v1 | Same declarations, status values, layouts and 18 exported application operations |
+
+Only the `dlopen` caller thread can claim the slot, once per load. A duplicate claim poisons the transaction. The
+backend supplies both compile-time struct sizes to the hook; mismatches are rejected before any writable address is
+returned. SPI v2 has fixed writable capacities, so future extensions need a new hook/version. The runtime checks exact
+binding/operation sizes, v2 identity, bounded name and all 13 callbacks before copying into its sole
+active binding. Core receives that stable binding under a create reservation. Incomplete staging never reaches Core.
+Create and callbacks run outside the runtime mutex. Live instances and create reservations block final unload; Core
+destroys partial instances before canceling reservations. After final `dlclose`, the runtime invalidates callback
+addresses; failed `dlclose` leaves it Faulted. Old modules requiring the removed v1 hook fail `RTLD_NOW` resolution.
+The public backend-version query now reports SPI v2, an intentional result change with unchanged function signature.
+
+The rollback strategy is transactional: validation or loader failure closes the candidate module and returns to
+Unloaded only after successful cleanup. No application-facing ABI migration is needed. V4L2 and simulated modules,
+plus test modules, move together; mixed v1/v2 deployment is unsupported. Host/ARM symbol, layout, dynamic loading,
+fault, lifecycle and M5 regressions are the acceptance gates. BBB execution remains owner-operated.
+
+### R2 source and ownership map
+
+```mermaid
+flowchart LR
+    App["CameraService + GStreamerController + camstreamsrc"] --> HAL["Camera HAL public interface"]
+    HAL --> Core["Camera Core: state, tokens, rollback"]
+    Core --> Binding["HAL runtime: active binding, module references"]
+    Binding --> VBackend["V4L2 Camera Backend Implementation"]
+    Binding --> Sim["Simulated Camera Backend Implementation"]
+    VBackend --> User["V4L2 Userspace: device, config, stream"]
+    User --> Kernel["Linux uvcvideo / V4L2 kernel driver"]
+```
+
+CameraService owns the HAL instance/module client reference, GStreamerController owns pipeline/bus/teardown, and
+`camstreamsrc` borrows HAL access and copies before releasing each frame. The Backend Implementation supplies callbacks;
+it is not the kernel driver. `camera_hal.c` stays a thin façade; `camera_core.c` owns state and tokens;
+`camera_backend_runtime.c` owns binding/loading/references; `camera_backend_v4l2.c` injects callback addresses;
+`v4l2_device.c`, `v4l2_config.c` and `v4l2_stream.c` retain device, negotiation and streaming work respectively.
+Private headers are not installed. No second dispatch table or capture path is introduced.
+
+### Implemented API mapping
+
+| Public HAL operation | Core/runtime destination | Backend callback or owner |
+|---|---|---|
+| `camstream_camera_hal_load_backend` | runtime load | `dlopen`/constructor/binding validation; no Core camera |
+| `camstream_camera_hal_unload_backend` | runtime unload | `dlclose` after references and instances permit; no Core camera |
+| `camstream_camera_hal_get_last_error` | runtime copy error | runtime diagnostic; no Core camera |
+| `camstream_camera_create` | `camera_core_create` | `camera_create` → `v4l2_create` (device) |
+| `camstream_camera_destroy` | `camera_core_destroy` | `camera_destroy` → `v4l2_destroy` (device) |
+| `camstream_camera_get_backend_name` | `camera_core_get_backend_name` | active binding metadata |
+| `camstream_camera_get_backend_abi_version` | `camera_core_get_backend_abi_version` | active binding SPI version |
+| `camstream_camera_open` | `camera_core_open` | `camera_open` → `v4l2_open` (device) |
+| `camstream_camera_close` | `camera_core_close` | `camera_close` → `v4l2_close` (device) |
+| `camstream_camera_get_capabilities` | `camera_core_get_capabilities` | `camera_get_capabilities` → `v4l2_get_capabilities` (config) |
+| `camstream_camera_get_stream_configuration` | `camera_core_get_stream_configuration` | `camera_get_stream_configuration` → `v4l2_get_stream_configuration` (config) |
+| `camstream_camera_configure` | `camera_core_configure` | `camera_configure` → `v4l2_configure` (config → stream buffer allocation) |
+| `camstream_camera_start` | `camera_core_start` | `camera_start` → `v4l2_start` (stream) |
+| `camstream_camera_wait_frame` | `camera_core_wait_frame` | `camera_wait_frame` → `v4l2_wait_frame` (stream) |
+| `camstream_camera_acquire_frame` | `camera_core_acquire_frame` | `camera_acquire_frame` → `v4l2_acquire_frame` (stream) |
+| `camstream_camera_release_frame` | `camera_core_release_frame` | `camera_release_frame` → `v4l2_release_frame` (stream) |
+| `camstream_camera_stop` | `camera_core_stop` | `camera_stop` → `v4l2_stop` (stream) |
+| `camstream_camera_get_last_error` | `camera_core_get_last_error` | HAL error or `camera_get_last_error` → `v4l2_get_last_error` (device) |
+
+The simulated backend supplies the same 13 callbacks without V4L2 or kernel access. Sections 1–6 below record the
+historical R1-B decision and tests. References there to an unchanged v1 SPI or pre-M5 scope describe that checkpoint
+and are superseded by the R2 decision above.
 
 > Project: Remote Video Monitoring (RVM), BeagleBone Black + Buildroot + Logitech C270  
 > Decision: **R1-B SOURCE SPLIT IMPLEMENTED; LOCAL VERIFICATION PASS; OWNER REVIEW PENDING**  
@@ -117,4 +199,6 @@ R1-B exit evidence:
 
 The previous R1 edited interface comments and documentation but left implementation `.c` and targets unchanged. This V3 document **supersedes the prior optional-source-split language** only for R1-B. The required HAL and V4L2 source split is now present and locally verified. The owner subsequently reported a post-R1-B BBB functional smoke PASS; no M5 BBB result is claimed.
 
-The repository's blanket `/docs/` ignore rule currently hides these decision files from normal Git status/diff. They remain authoritative local input for CODEX; the owner must explicitly choose to track them at Git review time (for example `git add -f` for the two exact paths). Do not delete the docs, the `.gitignore` or the pre-existing source files in advance of the verified refactor.
+The R1-B snapshot noted a blanket `/docs/` ignore rule. These two decision files are now tracked and visible in Git
+status/diff; other ignored documentation may still exist. Preserve it and report its status without changing ignore
+rules or Git state in this checkpoint.

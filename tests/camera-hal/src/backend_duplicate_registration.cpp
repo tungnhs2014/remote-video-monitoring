@@ -3,30 +3,13 @@
 namespace
 {
 
-const camstream_camera_backend_v1 kDuplicateTestDescriptor{
-        CAMSTREAM_CAMERA_ABI_VERSION_V1 + 1U,
-        sizeof(camstream_camera_backend_v1),
-        "duplicate-test-backend",
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        {},
-};
-
 __attribute__((constructor)) static void register_backend_twice() noexcept
 {
-    static_cast<void>(camstream_camera_hal_register_backend_v1(&kDuplicateTestDescriptor));
-    static_cast<void>(camstream_camera_hal_register_backend_v1(&kDuplicateTestDescriptor));
+    camstream_camera_binding_v2* binding = nullptr;
+    static_cast<void>(camstream_camera_hal_get_binding_slot_v2(
+            &binding, sizeof(camstream_camera_binding_v2), sizeof(camstream_camera_ops_v2)));
+    static_cast<void>(camstream_camera_hal_get_binding_slot_v2(
+            &binding, sizeof(camstream_camera_binding_v2), sizeof(camstream_camera_ops_v2)));
 }
 
 } // namespace

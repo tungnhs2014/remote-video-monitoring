@@ -3,29 +3,17 @@
 namespace
 {
 
-const camstream_camera_backend_v1 kInvalidBackend{
-        CAMSTREAM_CAMERA_ABI_VERSION_V1 + 1U,
-        sizeof(camstream_camera_backend_v1),
-        "invalid-test-backend",
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        {},
-};
-
 __attribute__((constructor)) static void register_invalid_backend() noexcept
 {
-    static_cast<void>(camstream_camera_hal_register_backend_v1(&kInvalidBackend));
+    camstream_camera_binding_v2* binding = nullptr;
+    if (camstream_camera_hal_get_binding_slot_v2(&binding, sizeof(camstream_camera_binding_v2),
+                sizeof(camstream_camera_ops_v2)) == CAMSTREAM_CAMERA_STATUS_OK)
+    {
+        binding->control_funcs->struct_size = sizeof(camstream_camera_ops_v2);
+        binding->backend_name = "invalid-test-backend";
+        binding->struct_size = sizeof(*binding);
+        binding->abi_version = CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2 + 1U;
+    }
 }
 
 } // namespace

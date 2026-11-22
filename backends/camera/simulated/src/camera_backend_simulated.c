@@ -493,26 +493,32 @@ static camstream_camera_status_t simulated_get_last_error(
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
 
-static const camstream_camera_backend_v1 backend_descriptor = {
-        .abi_version = CAMSTREAM_CAMERA_ABI_VERSION_V1,
-        .struct_size = sizeof(camstream_camera_backend_v1),
-        .backend_name = backend_name,
-        .create = simulated_create,
-        .destroy = simulated_destroy,
-        .open = simulated_open,
-        .close = simulated_close,
-        .get_capabilities = simulated_get_capabilities,
-        .get_stream_configuration = simulated_get_stream_configuration,
-        .configure = simulated_configure,
-        .start = simulated_start,
-        .wait_frame = simulated_wait_frame,
-        .acquire_frame = simulated_acquire_frame,
-        .release_frame = simulated_release_frame,
-        .stop = simulated_stop,
-        .get_last_error = simulated_get_last_error,
-};
-
-__attribute__((constructor)) static void register_simulated_backend(void)
+__attribute__((constructor)) static void inject_simulated_backend(void)
 {
-    (void)camstream_camera_hal_register_backend_v1(&backend_descriptor);
+    camstream_camera_binding_v2* binding = NULL;
+    if (camstream_camera_hal_get_binding_slot_v2(&binding, sizeof(camstream_camera_binding_v2),
+                sizeof(camstream_camera_ops_v2)) != CAMSTREAM_CAMERA_STATUS_OK)
+    {
+        return;
+    }
+
+    *binding->control_funcs = (camstream_camera_ops_v2){
+            .struct_size = sizeof(camstream_camera_ops_v2),
+            .camera_create = simulated_create,
+            .camera_destroy = simulated_destroy,
+            .camera_open = simulated_open,
+            .camera_close = simulated_close,
+            .camera_get_capabilities = simulated_get_capabilities,
+            .camera_get_stream_configuration = simulated_get_stream_configuration,
+            .camera_configure = simulated_configure,
+            .camera_start = simulated_start,
+            .camera_wait_frame = simulated_wait_frame,
+            .camera_acquire_frame = simulated_acquire_frame,
+            .camera_release_frame = simulated_release_frame,
+            .camera_stop = simulated_stop,
+            .camera_get_last_error = simulated_get_last_error,
+    };
+    binding->backend_name = backend_name;
+    binding->struct_size = sizeof(*binding);
+    binding->abi_version = CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2;
 }

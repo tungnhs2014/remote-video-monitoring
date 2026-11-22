@@ -28,7 +28,7 @@ typedef struct outstanding_frame
 
 struct camstream_camera
 {
-    const camstream_camera_backend_v1* operations;
+    const camstream_camera_binding_v2* binding;
     camstream_camera_instance* instance;
     camera_state state;
     outstanding_frame* frames;
@@ -174,7 +174,7 @@ static void clear_hal_error(camstream_camera* camera)
 
 static camstream_camera_status_t release_backend_token(camstream_camera* camera, uint64_t backend_token)
 {
-    return camera->operations->release_frame(camera->instance, backend_token);
+    return camera->binding->control_funcs->camera_release_frame(camera->instance, backend_token);
 }
 
 static camstream_camera_status_t rollback_acquired_frame(
@@ -216,13 +216,14 @@ static void cleanup_camera(camstream_camera* camera)
         (void)release_backend_token(camera, camera->frames[index - 1U].backend_token);
     }
     camera->frame_count = 0U;
-    if (camera->state == CAMERA_STARTED && camera->operations->stop(camera->instance) == CAMSTREAM_CAMERA_STATUS_OK)
+    if (camera->state == CAMERA_STARTED &&
+            camera->binding->control_funcs->camera_stop(camera->instance) == CAMSTREAM_CAMERA_STATUS_OK)
     {
         camera->state = CAMERA_STOPPED;
     }
     if (camera->state == CAMERA_OPEN || camera->state == CAMERA_CONFIGURED || camera->state == CAMERA_STOPPED)
     {
-        (void)camera->operations->close(camera->instance);
+        (void)camera->binding->control_funcs->camera_close(camera->instance);
     }
 }
 
@@ -234,8 +235,8 @@ camstream_camera_status_t camera_core_create(camstream_camera** camera)
     }
     *camera = NULL;
 
-    const camstream_camera_backend_v1* operations = NULL;
-    camstream_camera_status_t status = camstream_runtime_reserve_create(&operations);
+    const camstream_camera_binding_v2* binding = NULL;
+    camstream_camera_status_t status = camstream_runtime_reserve_create(&binding);
     camstream_camera_status_t cancel_status;
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
@@ -244,14 +245,15 @@ camstream_camera_status_t camera_core_create(camstream_camera** camera)
 
     camstream_camera_instance* instance = NULL;
     camstream_camera* created = NULL;
-    status = operations->create(&instance);
+    status = binding->control_funcs->camera_create(&instance);
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
         camstream_runtime_set_error("backend create failed without an instance diagnostic");
         if (instance != NULL)
         {
             char diagnostic[256] = {0};
-            if (operations->get_last_error(instance, diagnostic, sizeof(diagnostic)) == CAMSTREAM_CAMERA_STATUS_OK)
+            if (binding->control_funcs->camera_get_last_error(instance, diagnostic, sizeof(diagnostic)) ==
+                    CAMSTREAM_CAMERA_STATUS_OK)
             {
                 camstream_runtime_set_error(diagnostic);
             }
@@ -272,7 +274,7 @@ camstream_camera_status_t camera_core_create(camstream_camera** camera)
         status = CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
         goto cleanup_partial;
     }
-    created->operations = operations;
+    created->binding = binding;
     created->instance = instance;
     created->state = CAMERA_CREATED;
 
@@ -288,7 +290,7 @@ cleanup_partial:
     /* Keep the create reservation until a partial backend instance is gone. */
     if (instance != NULL)
     {
-        operations->destroy(instance);
+        binding->control_funcs->camera_destroy(instance);
     }
     free(created);
 
@@ -304,7 +306,7 @@ void camera_core_destroy(camstream_camera* camera)
         return;
     }
     cleanup_camera(camera);
-    camera->operations->destroy(camera->instance);
+    camera->binding->control_funcs->camera_destroy(camera->instance);
     free(camera->frames);
     free(camera->hal_error);
     free(camera);
@@ -317,7 +319,7 @@ camstream_camera_status_t camera_core_get_backend_name(camstream_camera* camera,
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    const char* name = camera->operations->backend_name;
+    const char* name = camera->binding->backend_name;
     const size_t length = strlen(name);
     if (length >= buffer_size)
     {
@@ -335,7 +337,7 @@ camstream_camera_status_t camera_core_get_backend_abi_version(camstream_camera* 
     {
         return CAMSTREAM_CAMERA_STATUS_INVALID_ARGUMENT;
     }
-    *abi_version = camera->operations->abi_version;
+    *abi_version = camera->binding->abi_version;
     clear_hal_error(camera);
     return CAMSTREAM_CAMERA_STATUS_OK;
 }
@@ -351,7 +353,8 @@ camstream_camera_status_t camera_core_open(camstream_camera* camera, const char*
         return set_hal_error(camera, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "open requires Created state");
     }
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->open(camera->instance, source_identifier);
+    const camstream_camera_status_t status =
+            camera->binding->control_funcs->camera_open(camera->instance, source_identifier);
     if (status == CAMSTREAM_CAMERA_STATUS_OK)
     {
         camera->state = CAMERA_OPEN;
@@ -383,7 +386,7 @@ camstream_camera_status_t camera_core_close(camstream_camera* camera)
         return set_hal_error(camera, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "close requires every frame released");
     }
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->close(camera->instance);
+    const camstream_camera_status_t status = camera->binding->control_funcs->camera_close(camera->instance);
     if (status == CAMSTREAM_CAMERA_STATUS_OK)
     {
         camera->state = CAMERA_CREATED;
@@ -406,7 +409,8 @@ camstream_camera_status_t camera_core_get_capabilities(
     camstream_camera_capabilities_v1 result;
     init_capabilities(&result);
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->get_capabilities(camera->instance, &result);
+    const camstream_camera_status_t status =
+            camera->binding->control_funcs->camera_get_capabilities(camera->instance, &result);
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
         return status;
@@ -437,7 +441,7 @@ camstream_camera_status_t camera_core_get_stream_configuration(
     init_configuration(&result);
     clear_hal_error(camera);
     const camstream_camera_status_t status =
-            camera->operations->get_stream_configuration(camera->instance, index, &result);
+            camera->binding->control_funcs->camera_get_stream_configuration(camera->instance, index, &result);
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
         return status;
@@ -466,7 +470,8 @@ camstream_camera_status_t camera_core_configure(camstream_camera* camera,
     camstream_camera_stream_config_v1 result;
     init_configuration(&result);
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->configure(camera->instance, requested, &result);
+    const camstream_camera_status_t status =
+            camera->binding->control_funcs->camera_configure(camera->instance, requested, &result);
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
         return status;
@@ -492,7 +497,7 @@ camstream_camera_status_t camera_core_start(camstream_camera* camera)
         return set_hal_error(camera, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "start requires Configured state");
     }
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->start(camera->instance);
+    const camstream_camera_status_t status = camera->binding->control_funcs->camera_start(camera->instance);
     if (status == CAMSTREAM_CAMERA_STATUS_OK)
     {
         camera->state = CAMERA_STARTED;
@@ -515,7 +520,7 @@ camstream_camera_status_t camera_core_wait_frame(camstream_camera* camera, uint3
         return set_hal_error(camera, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "frame ownership cleanup is unresolved");
     }
     clear_hal_error(camera);
-    return camera->operations->wait_frame(camera->instance, timeout_ms);
+    return camera->binding->control_funcs->camera_wait_frame(camera->instance, timeout_ms);
 }
 
 camstream_camera_status_t camera_core_acquire_frame(camstream_camera* camera, camstream_camera_frame_v1* frame)
@@ -536,7 +541,8 @@ camstream_camera_status_t camera_core_acquire_frame(camstream_camera* camera, ca
     camstream_camera_frame_v1 acquired;
     init_frame(&acquired);
     clear_hal_error(camera);
-    const camstream_camera_status_t status = camera->operations->acquire_frame(camera->instance, &acquired);
+    const camstream_camera_status_t status =
+            camera->binding->control_funcs->camera_acquire_frame(camera->instance, &acquired);
     if (status != CAMSTREAM_CAMERA_STATUS_OK)
     {
         return status;
@@ -668,7 +674,7 @@ camstream_camera_status_t camera_core_stop(camstream_camera* camera)
     {
         return set_hal_error(camera, CAMSTREAM_CAMERA_STATUS_INVALID_STATE, "frame ownership state is faulted");
     }
-    const camstream_camera_status_t status = camera->operations->stop(camera->instance);
+    const camstream_camera_status_t status = camera->binding->control_funcs->camera_stop(camera->instance);
     if (status == CAMSTREAM_CAMERA_STATUS_OK)
     {
         camera->state = CAMERA_STOPPED;
@@ -694,5 +700,5 @@ camstream_camera_status_t camera_core_get_last_error(camstream_camera* camera, c
         buffer[length] = '\0';
         return CAMSTREAM_CAMERA_STATUS_OK;
     }
-    return camera->operations->get_last_error(camera->instance, buffer, buffer_size);
+    return camera->binding->control_funcs->camera_get_last_error(camera->instance, buffer, buffer_size);
 }

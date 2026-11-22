@@ -5,22 +5,25 @@
 #error "Define CAMSTREAM_LOG_MODULE before including camstream/common/log.h"
 #endif
 
+/* Clang-format 14 mis-indents declarations when C++ linkage braces are conditional. */
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+    // clang-format off
 
-    typedef enum camstream_log_level
-    {
-        CAMSTREAM_LOG_ERROR,
-        CAMSTREAM_LOG_WARN,
-        CAMSTREAM_LOG_INFO,
-        CAMSTREAM_LOG_DEBUG
-    } camstream_log_level;
+typedef enum camstream_log_level
+{
+    CAMSTREAM_LOG_ERROR,
+    CAMSTREAM_LOG_WARN,
+    CAMSTREAM_LOG_INFO,
+    CAMSTREAM_LOG_DEBUG
+} camstream_log_level;
 
-    /** @brief Writes one allocation-free, module-tagged diagnostic to standard error. */
-    void camstream_log_write(const char* module, camstream_log_level level, const char* format, ...);
+/** @brief Writes one allocation-free, module-tagged diagnostic to standard error. */
+void camstream_log_write(const char* module, camstream_log_level level, const char* format, ...);
 
+// clang-format on
 #ifdef __cplusplus
 }
 #endif

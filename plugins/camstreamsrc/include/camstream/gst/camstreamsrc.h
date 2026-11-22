@@ -17,8 +17,7 @@ G_DECLARE_FINAL_TYPE(CamstreamSrc, camstream_src, CAMSTREAM, SRC, GstPushSrc)
  * Call only while the source is stopped. Passing NULL for both arguments unbinds a quiescent source; an unresolved
  * release prevents unbinding so the borrowed camera remains available for cleanup.
  */
-gboolean camstream_src_bind(
-        CamstreamSrc* source, camstream_camera* camera, const camstream_camera_stream_config_v1* active);
+gboolean camstream_src_bind(CamstreamSrc* source, camstream_camera* camera, const camstream_camera_stream_config_v1* active);
 
 /** @brief Closes source admission before the owner transitions the pipeline toward NULL; performs no HAL call. */
 void camstream_src_request_stop(CamstreamSrc* source);

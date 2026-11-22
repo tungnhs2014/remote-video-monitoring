@@ -47,14 +47,16 @@ Development is organized into incremental milestones.
 | M4-B — session-owner smoke harness | Host verified; owner-reported BBB 640x480@15 FPS, 30 frames × 2 cycles PASS |
 | R1 — architecture and coding-style adoption | Local interface/documentation update; BBB after R1 NOT RUN |
 | R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB 2 × 30-frame C270 functional smoke owner-reported PASS |
-| M5 — CameraService and GStreamerController | Host and ARM build locally verified; BBB NOT RUN |
-| M6 — gRPC remote control | Host/ARM locally verified; BBB remote acceptance NOT RUN |
-| BeagleBone Black hardware validation | M3 and M4-B functional smoke owner-reported PASS; USB/MUSB reliability open |
+| M5 — CameraService and GStreamerController | Host and ARM build locally verified; dedicated M5 BBB acceptance NOT RUN; components exercised in the owner-reported M6 run |
+| M6 — gRPC remote control | Codex host/ARM verification PASS; owner reports BBB remote gRPC functional PASS |
+| M7-B — RTP/JPEG network sender | Code implemented; build, tests, ARM image and BBB media delivery NOT TESTED |
+| BeagleBone Black hardware validation | M3, M4-B and M6 functional paths owner-reported PASS; USB/MUSB reliability open |
 
 The V4L2 backend implements YUYV configuration and MMAP streaming through Camera HAL. The M4-A plugin copies frames
 into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 USB/MUSB reset issue with an
-unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. The M6 gRPC control server and
-client are locally implemented and verified; laptop-to-BBB control is NOT RUN. Network media delivery belongs to M7.
+unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. The owner reports that an Ubuntu
+gRPC client controlled the BBB through discovery, Configure, Start, Status and Stop. That M6 control result does not
+establish remote video delivery. M7-B adds a selectable RTP/JPEG sender; its build and runtime behavior are unverified.
 
 ## 4. Build and Test
 
@@ -67,8 +69,10 @@ client are locally implemented and verified; laptop-to-BBB control is NOT RUN. N
 
 ### Host Build
 
+**NOT EXECUTED for M7-B — OWNER ACTION REQUIRED.**
+
 ```bash
-cmake -S . -B build
+cmake -S . -B build -DCAMSTREAM_ENABLE_GRPC=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
@@ -82,7 +86,8 @@ harness with `-DCAMSTREAM_M4_SESSION_SMOKE=ON`. The harness accepts a backend mo
 source identifier, YUYV mode, frame count and cycle count. An ARM cross-build does not establish
 plugin runtime behavior on the board.
 
-For M6 gRPC host/ARM evidence and owner-operated BBB commands, see the [M6 verification report](docs/development/m6-grpc-control.md).
+For M6 Codex-run host/ARM evidence and its historical BBB handoff, see the [M6 verification report](docs/development/m6-grpc-control.md).
+For M7-B owner-only build, receiver and BBB procedures, see the [M7 network video guide](docs/development/m7-network-video.md).
 
 ## 5. Verification
 
@@ -94,9 +99,9 @@ Current development verification includes:
 - AddressSanitizer and UndefinedBehaviorSanitizer testing
 - ARM cross-compilation
 
-The owner reports M3 C270 streaming, M4-B functional smoke and a post-R1-B smoke with two 30-frame cycles at
-YUYV 640x480@15 FPS on BeagleBone Black. M5 has not been run on the board. This functional evidence does not resolve
-`STAGE7-USB-01` USB/MUSB stability or establish long-run delivered throughput.
+The owner reports M3 C270 streaming, M4-B functional smoke, post-R1-B two 30-frame cycles and M6 laptop-to-BBB gRPC
+control at YUYV 640x480@15 FPS. The dedicated M5 BBB acceptance matrix was not separately run. This functional
+evidence does not resolve `STAGE7-USB-01` USB/MUSB stability, establish sustained throughput or verify M7 remote media.
 
 ## 6. Project Goals
 

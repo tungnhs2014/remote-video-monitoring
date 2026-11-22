@@ -17,4 +17,7 @@
 
 # Internal project evidence and documentation
 /SOURCE_EVIDENCE.md
-/docs/
+/docs/*
+!/docs/development/
+/docs/development/*
+!/docs/development/m7-network-video.md

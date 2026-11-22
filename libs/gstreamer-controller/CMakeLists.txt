@@ -7,4 +7,5 @@ TARGET_LINK_LIBRARIES(camstream-gstreamer-controller PUBLIC gstcamstreamsrc PkgC
     PRIVATE camstream::common-log)
 IF(BUILD_TESTING)
     TARGET_COMPILE_DEFINITIONS(camstream-gstreamer-controller PUBLIC CAMSTREAM_M5_TESTING)
+    TARGET_COMPILE_DEFINITIONS(camstream-gstreamer-controller PUBLIC CAMSTREAM_M7_TESTING)
 ENDIF()

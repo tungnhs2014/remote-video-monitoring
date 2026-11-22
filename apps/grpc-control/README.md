@@ -15,7 +15,8 @@ fields rather than reusing a tag. The generated C++ is build output, not handwri
 - Pixel format `PIXEL_FORMAT_YUYV` maps to the public HAL's YUYV fourcc; other/unknown enum values are rejected.
   Width, height and rational FPS numerator/denominator must be nonzero and bounded before conversion. `requested`
   is the accepted client request; `active` is the driver-confirmed HAL result after Configure. Neither is delivered
-  frame rate. `local_pipeline_frames` counts local pipeline fakesink handoffs and is not remote media delivery.
+  frame rate. `local_pipeline_frames` counts fakesink handoffs in local mode and JPEG frames observed at the encoder
+  output before RTP packetization in M7 network mode. Neither count measures UDP receipt or remote playback.
 - `generation` begins at zero for each server process and increments whenever the authoritative service changes
   session state. It does not identify a process across restarts. Every mutating RPC supplies `expected_generation`;
   the service checks it under the same lock as the operation. A stale value returns `FAILED_PRECONDITION` without
@@ -35,6 +36,10 @@ fields rather than reusing a tag. The generated C++ is build output, not handwri
 - Default listener is `127.0.0.1:50051` with plaintext transport. Binding a non-loopback address requires an
   explicit `--allow-insecure-lan` option and is intended only for an isolated/trusted lab network. M6 has no
   authentication or TLS policy for untrusted networks; such deployment requires a separate approved design.
+- M7 adds an operator-selected server media mode. The default is `local`; `--media-mode rtp-jpeg` requires a numeric
+  IPv4 `--media-host` and nonzero `--media-port`. The operator selects a unicast receiver address. The RPC client cannot
+  change this destination. `StartStream`
+  confirms only the local pipeline state; UDP provides no receiver acknowledgement. The protobuf contract is unchanged.
 - Application RPC logs use C++ `steady_clock` milliseconds (`mono_ms`) for approximate correlation with uptime-based
   kernel logs; confirm the target library's clock mapping before exact timestamp comparisons. A successful RPC
   confirms a control-plane operation, not remote video playback.

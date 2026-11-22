@@ -28,6 +28,8 @@ CameraServiceResult success()
 
 } // namespace
 
+CameraService::CameraService(MediaOutputConfig media) : controller_(std::move(media)) {}
+
 CameraService::~CameraService() noexcept
 {
     try
@@ -180,9 +182,14 @@ CameraServiceResult CameraService::configure_locked(
             code = camstream_camera_configure(camera_, &requested_, &active_);
         }
     }
+    std::string media_error;
+    if (code == CAMSTREAM_CAMERA_STATUS_OK && !controller_.accepts(active_, media_error))
+    {
+        code = CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
+    }
     if (code != CAMSTREAM_CAMERA_STATUS_OK)
     {
-        const CameraServiceResult primary = hal_failure("Configure", code);
+        const CameraServiceResult primary = media_error.empty() ? hal_failure("Configure", code) : CameraServiceResult{false, code, media_error};
         const CameraServiceResult cleanup = stop_locked();
         last_error_ = primary.detail;
         if (!cleanup.success)

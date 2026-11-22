@@ -70,6 +70,8 @@ class CameraService final
 {
   public:
     CameraService() = default;
+    /** Fixes the operator-selected media output for this service lifetime; no RPC can change it. */
+    explicit CameraService(MediaOutputConfig media);
     ~CameraService() noexcept;
     CameraService(const CameraService&) = delete;
     CameraService& operator=(const CameraService&) = delete;

@@ -14,7 +14,7 @@ TARGET_LINK_LIBRARIES(gstcamstreamsrc PRIVATE
     PkgConfig::CAMSTREAM_GST camstream::camera-hal camstream::common-log)
 SET_TARGET_PROPERTIES(gstcamstreamsrc PROPERTIES OUTPUT_NAME gstcamstreamsrc)
 
-INSTALL(TARGETS gstcamstreamsrc LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/gstreamer-1.0)
+INSTALL(TARGETS gstcamstreamsrc LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/gstreamer-1.0 COMPONENT Runtime)
 INSTALL(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 OPTION(CAMSTREAM_M4_SESSION_SMOKE "Build the local/target M4 session-owner diagnostic harness" OFF)

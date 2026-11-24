@@ -1,1 +1,1 @@
-# M1 provides the external-tree entry point. Application packages arrive in authorized later checkpoints.
+source "$BR2_EXTERNAL_RVM_PATH/package/remote-video-monitoring/Config.in"

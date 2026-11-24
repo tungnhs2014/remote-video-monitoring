@@ -10,4 +10,4 @@ TARGET_COMPILE_OPTIONS(camstream-camera-backend-v4l2 PRIVATE -Wall -Wextra -Wped
 TARGET_LINK_LIBRARIES(camstream-camera-backend-v4l2 PRIVATE camstream::camera-hal camstream::common-log)
 
 INSTALL(TARGETS camstream-camera-backend-v4l2
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/camstream/backends)
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/camstream/backends COMPONENT Runtime)

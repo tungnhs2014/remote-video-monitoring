@@ -16,5 +16,5 @@ TARGET_LINK_LIBRARIES(camstream-camera-hal PRIVATE
     ${CMAKE_DL_LIBS} Threads::Threads camstream::common-log)
 TARGET_LINK_OPTIONS(camstream-camera-hal PRIVATE -Wl,--exclude-libs,libcamstream-common-log.a)
 
-INSTALL(TARGETS camstream-camera-hal LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+INSTALL(TARGETS camstream-camera-hal LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime)
 INSTALL(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

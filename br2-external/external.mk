@@ -1,1 +1,1 @@
-# M1 provides the external-tree entry point. Application package makefiles arrive in authorized later checkpoints.
+include $(sort $(wildcard $(BR2_EXTERNAL_RVM_PATH)/package/*/*.mk))

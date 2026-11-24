@@ -1,0 +1,100 @@
+#!/bin/sh
+
+DAEMON=remote-video-monitoring
+DAEMON_PATH=/usr/bin/camstream-grpc-server
+BACKEND=/usr/lib/camstream/backends/libcamstream-camera-backend-v4l2.so
+PLUGIN=/usr/lib/gstreamer-1.0/libgstcamstreamsrc.so
+CONFIG=/etc/default/remote-video-monitoring
+PIDFILE=/var/run/$DAEMON.pid
+LOGFILE=/var/log/$DAEMON.log
+
+if [ -r "$CONFIG" ]; then
+	# shellcheck source=/dev/null
+	. "$CONFIG"
+fi
+
+start()
+{
+	if [ "${RVM_ENABLED:-0}" != 1 ]; then
+		echo "RVM disabled in $CONFIG"
+		return 0
+	fi
+
+	if [ ! -x "$DAEMON_PATH" ] || [ ! -f "$BACKEND" ] || [ ! -f "$PLUGIN" ]; then
+		echo "RVM runtime artifact missing" >&2
+		return 1
+	fi
+
+	set -- --backend "$BACKEND" --plugin "$PLUGIN" --source "${RVM_SOURCE:-/dev/video0}" \
+		--listen "${RVM_LISTEN:-127.0.0.1:50051}"
+
+	case "${RVM_ALLOW_INSECURE_LAN:-0}" in
+		0) ;;
+		1) set -- "$@" --allow-insecure-lan ;;
+		*) echo "Invalid RVM_ALLOW_INSECURE_LAN" >&2; return 1 ;;
+	esac
+
+	case "${RVM_MEDIA_MODE:-local}" in
+		local) ;;
+		rtp-jpeg)
+			if [ -z "${RVM_MEDIA_HOST:-}" ] || [ -z "${RVM_MEDIA_PORT:-}" ]; then
+				echo "RTP/JPEG destination is incomplete" >&2
+				return 1
+			fi
+			set -- "$@" --media-mode rtp-jpeg --media-host "${RVM_MEDIA_HOST:-}" --media-port "${RVM_MEDIA_PORT:-}"
+			;;
+		*) echo "Invalid RVM_MEDIA_MODE" >&2; return 1 ;;
+	esac
+
+	printf 'Starting RVM: '
+	if start-stop-daemon -S -q -b -O "$LOGFILE" -m -p "$PIDFILE" -x "$DAEMON_PATH" -- "$@"; then
+		echo OK
+	else
+		echo FAIL
+		return 1
+	fi
+}
+
+stop()
+{
+	printf 'Stopping RVM: '
+	if [ ! -f "$PIDFILE" ]; then
+		echo 'not running'
+		return 0
+	fi
+
+	read -r pid < "$PIDFILE"
+	case "$pid" in
+		''|*[!0-9]*) echo 'FAIL: invalid pidfile' >&2; return 1 ;;
+	esac
+	if ! kill -0 "$pid" 2>/dev/null; then
+		rm -f "$PIDFILE"
+		echo 'not running'
+		return 0
+	fi
+
+	if ! start-stop-daemon -K -q -p "$PIDFILE" -x "$DAEMON_PATH"; then
+		echo FAIL
+		return 1
+	fi
+
+	count=0
+	while [ "$count" -lt 15 ] && kill -0 "$pid" 2>/dev/null; do
+		sleep 1
+		count=$((count + 1))
+	done
+	if kill -0 "$pid" 2>/dev/null; then
+		echo 'FAIL: shutdown timed out'
+		return 1
+	fi
+
+	rm -f "$PIDFILE"
+	echo OK
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop && start ;;
+	*) echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

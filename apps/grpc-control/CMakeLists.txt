@@ -56,7 +56,8 @@ TARGET_COMPILE_FEATURES(camstream-grpc-client PRIVATE cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-grpc-client PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_LINK_LIBRARIES(camstream-grpc-client PRIVATE camstream-grpc-proto)
 
-INSTALL(TARGETS camstream-grpc-server camstream-grpc-client RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+INSTALL(TARGETS camstream-grpc-server RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
+INSTALL(TARGETS camstream-grpc-client RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 IF(BUILD_TESTING)
     TARGET_COMPILE_DEFINITIONS(camstream-grpc-adapter PUBLIC CAMSTREAM_M6_TESTING)

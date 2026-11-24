@@ -1,0 +1,12 @@
+config BR2_PACKAGE_REMOTE_VIDEO_MONITORING
+	bool "remote-video-monitoring"
+	depends on BR2_PACKAGE_GRPC
+	depends on BR2_PACKAGE_GSTREAMER1
+	select BR2_PACKAGE_GST1_PLUGINS_BASE
+	select BR2_PACKAGE_GST1_PLUGINS_GOOD
+	select BR2_PACKAGE_GST1_PLUGINS_GOOD_JPEG
+	select BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_RTP
+	select BR2_PACKAGE_GST1_PLUGINS_GOOD_PLUGIN_UDP
+	help
+	  Camera HAL, V4L2 backend, GStreamer source and gRPC server.
+	  The package builds from the local RVM checkout.

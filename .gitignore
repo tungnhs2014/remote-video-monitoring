@@ -13,6 +13,19 @@
 /diagnostics/
 /*.log
 
+# Local credentials and environment overrides; example templates stay public.
+**/wpa_supplicant.conf
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+*.env.local
+*.credentials
+*.secret
+*.private.key
+*.private.pem
+
 # Local editor files.
 *.swp
 *~

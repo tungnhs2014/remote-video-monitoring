@@ -1,124 +1,77 @@
-# Remote Video Monitoring System
+# Remote Video Monitoring
 
-An Embedded Linux project designed to capture, process, and stream video
-from a USB camera to remote clients.
+Remote Video Monitoring (RVM) lets an Ubuntu computer control and watch a USB camera attached to a BeagleBone Black (BBB). The operator boots the board, chooses its camera and destination, starts a viewer on Ubuntu, then configures, starts and stops one camera session. The board handles capture and sends video; Ubuntu displays it. This is an Embedded Linux engineering MVP, not a production surveillance product.
 
-The system targets the BeagleBone Black and follows a modular architecture
-built around a C11 Camera HAL, Linux V4L2, GStreamer, and gRPC.
+The control commands use gRPC. The video uses JPEG carried by RTP over UDP. The two paths are separate so a control reply cannot be mistaken for proof that Ubuntu received a frame.
 
-## 1. System Architecture
+## Why this project exists
 
-The system separates camera acquisition, video processing, and remote control
-into independent components.
+A camera attached to a small board is useful only when an operator can configure it, see its video elsewhere, and stop it without leaving the device or process in an unsafe state. RVM demonstrates that complete path on a real Embedded Linux target. It also makes the engineering boundaries visible: Linux owns USB capture, a C HAL manages camera lifetime, GStreamer handles timed media, and gRPC carries control requests. A beginner can run the system; a developer can inspect the ownership and failure paths behind it.
 
-| Component | Technology | Responsibility |
-|---|---|---|
-| Camera HAL | C11 | Camera abstraction, backend management, resource ownership |
-| V4L2 Backend | C11 | Linux camera device interaction |
-| Simulated Backend | C11 | Hardware-independent development and testing |
-| GStreamer Source | GStreamer / GObject | Camera HAL integration into the video pipeline |
-| Pipeline Controller | C++17 | Pipeline lifecycle and video processing |
-| Camera Service | C++17 | Camera operations and application coordination |
-| Control Plane | gRPC / Protocol Buffers | Remote camera control |
-| Build System | CMake / Buildroot | Host development and Embedded Linux integration |
-
-The video data plane uses GStreamer, while the control plane uses gRPC.
-
-## 2. Target Platform
-
-- Board: BeagleBone Black
-- Operating System: Embedded Linux
-- Root Filesystem: Buildroot
-- Camera: Logitech C270 USB Webcam
-- Camera Interface: Video4Linux2 (V4L2)
-- Programming Languages: C11 and C++17
-
-## 3. Development Status
-
-Development is organized into incremental milestones.
-
-| Milestone | Status |
-|---|---|
-| M1 — Project foundation and build system | Completed |
-| M2-A — Camera HAL and simulated backend | Completed |
-| M2-B — V4L2 Phase-1 camera discovery | Completed |
-| M3 — V4L2 configuration and frame capture | Completed; BBB C270 640x480@15 FPS owner-reported PASS |
-| M4-A — camstreamsrc copy-first source | Host verified; M4-B BBB functional smoke owner-reported PASS |
-| M4-B — session-owner smoke harness | Host verified; owner-reported BBB 640x480@15 FPS, 30 frames × 2 cycles PASS |
-| R1 — architecture and coding-style adoption | Local interface/documentation update; BBB after R1 NOT RUN |
-| R1-B — HAL Core and V4L2 internal source split | Host/ARM locally verified; BBB 2 × 30-frame C270 functional smoke owner-reported PASS |
-| M5 — CameraService and GStreamerController | Host and ARM build locally verified; dedicated M5 BBB acceptance NOT RUN; components exercised in the owner-reported M6 run |
-| M6 — gRPC remote control | Codex host/ARM verification PASS; owner reports BBB remote gRPC functional PASS |
-| M7-B — RTP/JPEG network sender | Code implemented; build, tests, ARM image and BBB media delivery NOT TESTED |
-| BeagleBone Black hardware validation | M3, M4-B and M6 functional paths owner-reported PASS; USB/MUSB reliability open |
-
-The V4L2 backend implements YUYV configuration and MMAP streaming through Camera HAL. The M4-A plugin copies frames
-into GStreamer-owned buffers before releasing HAL tokens. The owner-reported C270 USB/MUSB reset issue with an
-unpowered hub shared with Wi-Fi remains open; its hardware root cause is unconfirmed. The owner reports that an Ubuntu
-gRPC client controlled the BBB through discovery, Configure, Start, Status and Stop. That M6 control result does not
-establish remote video delivery. M7-B adds a selectable RTP/JPEG sender; its build and runtime behavior are unverified.
-
-## 4. Build and Test
-
-### Requirements
-
-- CMake 3.16 or later
-- C11 and C++17 compatible compilers
-- Linux development environment
-- GStreamer and GLib development packages for `camstreamsrc` and its host tests
-
-### Host Build
-
-**NOT EXECUTED for M7-B — OWNER ACTION REQUIRED.**
-
-```bash
-cmake -S . -B build -DCAMSTREAM_ENABLE_GRPC=ON
-cmake --build build --parallel
-ctest --test-dir build --output-on-failure
+```mermaid
+flowchart LR
+    subgraph BBB[BeagleBone Black / Buildroot]
+        Camera[USB UVC camera] --> V4L2[Linux V4L2] --> HAL[Camera HAL]
+        HAL --> Source[camstreamsrc] --> Pipe[GStreamer JPEG / RTP sender]
+        Server[gRPC server] --> Service[CameraService] --> Controller[GStreamerController]
+        Service --> HAL
+        Controller --> Pipe
+    end
+    Client[Ubuntu gRPC client] -->|control / TCP| Server
+    Pipe -->|video / UDP| Receiver[Ubuntu GStreamer receiver]
 ```
 
-### Target Build
+## What is implemented
 
-ARM cross-compilation is supported through the existing CMake build system.
+- A C11 Camera HAL with an opaque public API, dynamic backend loading, a V4L2 backend, and a simulated backend for tests.
+- A C/GObject `camstreamsrc` source that copies camera frames into GStreamer memory and releases HAL frame tokens before publication.
+- C++17 `CameraService` and `GStreamerController` for camera ownership, session state, and pipeline lifetime.
+- A protobuf/gRPC control API for discovery, capabilities, Configure, Start, Stop, and Status. Video is sent separately through RTP/JPEG over UDP.
+- A Buildroot external tree that packages the BBB server, runtime libraries, V4L2 backend, GStreamer plugin, dependencies, and a SysV init script.
 
-The saved Buildroot defconfig selects GStreamer and M6 gRPC dependencies for the ARM toolchain. Build the M4-B session-owner
-harness with `-DCAMSTREAM_M4_SESSION_SMOKE=ON`. The harness accepts a backend module, plugin module,
-source identifier, YUYV mode, frame count and cycle count. An ARM cross-build does not establish
-plugin runtime behavior on the board.
+The production camera path is **V4L2 backend → Camera HAL → camstreamsrc → GStreamer**. Diagnostic `v4l2-ctl` and `v4l2src` use are outside that path.
 
-For M6 Codex-run host/ARM evidence and its historical BBB handoff, see the [M6 verification report](docs/development/m6-grpc-control.md).
-For M7-B owner-only build, receiver and BBB procedures, see the [M7 network video guide](docs/development/m7-network-video.md).
+## What an operator does
 
-## 5. Verification
+On the BBB, the operator boots the Buildroot image, identifies the camera's Video Capture node, and configures the service for a trusted lab network. On Ubuntu, they start the RTP/JPEG receiver and use the client to query capabilities, Configure, Start, check Status, and Stop. A second Configure/Start/Stop cycle checks that resources were released for restart. The service reports its local state; the Ubuntu receiver must confirm decoded video independently.
 
-Current development verification includes:
+## Technology at a glance
 
-- Host compilation and regression tests
-- Camera HAL ABI compatibility checks
-- V4L2 backend regression tests using simulated ioctl responses
-- AddressSanitizer and UndefinedBehaviorSanitizer testing
-- ARM cross-compilation
+| Technology | Role here |
+|---|---|
+| Linux `uvcvideo` and V4L2 | Kernel camera support and userspace capture operations |
+| C11 Camera HAL and backend SPI | Stable C boundary, opaque camera state, backend selection and frame tokens |
+| GStreamer / C/GObject | Frame copy, caps/timestamps, JPEG encoding and RTP output |
+| C++17 | Session, pipeline lifetime and coordinated cleanup |
+| Protobuf / gRPC | Versioned remote control and status, separate from video |
+| CMake / Buildroot | Host development and BBB cross-built firmware |
 
-The owner reports M3 C270 streaming, M4-B functional smoke, post-R1-B two 30-frame cycles and M6 laptop-to-BBB gRPC
-control at YUYV 640x480@15 FPS. The dedicated M5 BBB acceptance matrix was not separately run. This functional
-evidence does not resolve `STAGE7-USB-01` USB/MUSB stability, establish sustained throughput or verify M7 remote media.
+## Source layout
 
-## 6. Project Goals
+| Directory | Purpose |
+|---|---|
+| `libs/camera-hal/`, `backends/camera/` | Public C ABI, private Core/runtime, V4L2 and simulated implementations |
+| `plugins/camstreamsrc/` | GStreamer source plugin using the public HAL |
+| `libs/gstreamer-controller/`, `apps/camera-service/` | C++17 pipeline and camera-session owners |
+| `apps/grpc-control/` | Protobuf contract, adapter, server, and Ubuntu client |
+| `br2-external/` | BBB Buildroot configuration, application package, and startup files |
+| `tests/` | Host regression and integration tests |
 
-- Maintain a modular and portable camera abstraction.
-- Separate video acquisition from application control.
-- Support multiple camera backends.
-- Follow safe resource ownership and lifecycle management.
-- Build maintainable C11 and C++17 components.
-- Integrate video streaming and remote control incrementally.
-- Validate the complete system on real Embedded Linux hardware.
+## Start here
 
-## 7. Project Status
+Read [Getting started](docs/getting-started.md) for host prerequisites, build commands, firmware preparation, and the two-cycle camera check. The BBB configuration defaults to loopback-only gRPC and a local GStreamer sink; network mode requires explicit trusted-lab settings. There is no one-command installation.
 
-**Work in progress.**
+| Guide | Question it answers |
+|---|---|
+| [System architecture](docs/system-architecture.md) | How do control and video travel through the system? |
+| [Component design](docs/component-design.md) | Which module owns each interface and resource? |
+| [Runtime lifecycle](docs/runtime-lifecycle.md) | What happens during Configure, Start, frames, Stop, and failure? |
+| [Applied Embedded Linux](docs/applied-embedded-linux.md) | Why are V4L2, a C ABI, GStreamer, gRPC, and Buildroot used? |
+| [Build and deployment](docs/build-and-deployment.md) | How are host and BBB artifacts produced and checked? |
+| [Troubleshooting](docs/troubleshooting.md) | How are camera, plugin, control, and receiver failures isolated? |
 
-The repository contains the project foundation, Camera HAL, simulated and V4L2 backends, the M4-A
-custom source and the M4-B session-owner smoke harness.
+The [M7 evidence record](docs/verification/m7-verification-report.md) separates owner-reported hardware results from unmeasured behavior. The [system contracts](docs/architecture/system-contracts.md) and [gRPC contract](apps/grpc-control/README.md) retain detailed API and ownership rules.
 
-Further functionality will be developed and validated
-incrementally on the target hardware.
+## Status and limits
+
+The owner reported a BBB firmware boot, gRPC control, Ubuntu RTP/JPEG display, and two Configure → Start → Stop cycles using a Logitech C270 at configured YUYV 640×480, 15 FPS. BBB sender counters are **not** decoded receiver FPS; the detailed observations are in the [M7 evidence record](docs/verification/m7-verification-report.md). Long-run performance, stability, recovery, receiver FPS/loss/jitter, and the cause of observed C270 USB resets remain unverified. Plaintext gRPC and unauthenticated UDP are limited to a trusted lab; release source pinning, licensing, and third-party notices remain open. Raspberry Pi integration is future work and is not implemented.

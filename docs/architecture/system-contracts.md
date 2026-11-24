@@ -2,21 +2,15 @@
 
 **Title:** Design and Implementation of a Remote Video Monitoring System  
 **Platform:** BeagleBone Black + Logitech C270 + Buildroot/Linux  
-**Document state:** Engineering contract reference. M0-B proposals and pending wording below record their historical state. The later M4 decision resolved HAL owner placement: CameraService/session owns the HAL instance and backend module client reference, GStreamerController owns pipeline state/bus/coordinated teardown, and `camstreamsrc` borrows HAL access. Other deferred decisions remain deferred. Historical approval/provenance is recorded in the migration baseline and source evidence.
+**Current authority:** §§3–5 define protected architecture, ABI, ownership, token and lifecycle contracts. §§1–2 are non-normative orientation; §§6–9 are a historical appendix, not new implementation requirements. The later M4 decision placed the HAL instance and backend module client reference in CameraService/session; GStreamerController owns pipeline state, bus and coordinated teardown; `camstreamsrc` borrows HAL access. M7 uses RTP/JPEG over UDP and R3 packaged firmware. See the [current system architecture](../system-architecture.md) and [verification report](../verification/m7-verification-report.md). Historical provenance remains in private local evidence.
 
-## 1. Product first — giá trị thực tế
+## 1. Product purpose
 
-Thiết bị BBB lấy video từ camera USB đặt tại phòng lab/khu vực máy móc, truyền video tới laptop cùng mạng LAN và nhận lệnh điều khiển từ xa. Người vận hành có thể:
+The BBB captures a USB camera in a lab or equipment area, sends video to a laptop on the same LAN and accepts remote control. An operator can query the configured camera and its modes, request format/resolution/frame interval, start and stop streaming through gRPC, view video in a GStreamer receiver and inspect status/errors. A camera mapping is not proof of physical presence; the current [gRPC contract](../../apps/grpc-control/README.md) defines discovery precisely.
 
-1. Liệt kê camera/configuration thực sự có.
-2. Cấu hình format/resolution/frame interval theo contract được duyệt.
-3. Start/Stop streaming qua gRPC.
-4. Xem live video tại laptop qua GStreamer receiver.
-5. Query health/status và phát hiện device loss, lỗi pipeline hoặc camera timeout.
+**Historical M0-B MVP limit:** one webcam, one active stream, one BBB and one laptop receiver. AI, recording, a browser dashboard, PTZ, cloud service and an Internet-facing endpoint require separate decisions. The current implementation and remaining limits are in the [system architecture](../system-architecture.md).
 
-**Proposed MVP limits — M0-B confirmation required:** một webcam, một stream active, một BBB và một laptop receiver. Không tự thêm AI, recording, browser dashboard, PTZ, cloud platform hay internet-facing service. Nâng cấp đa camera/client cần requirement riêng.
-
-## 2. Kiến trúc không duplicate
+## 2. One production acquisition path
 
 ```mermaid
 flowchart TB
@@ -31,10 +25,10 @@ flowchart TB
     Pipeline --> Receiver["Laptop: video receiver"]
 ```
 
-- **Control plane:** gRPC Start/Stop/Configure/Status và state policy.
+- **Control plane:** gRPC Configure/Start/Stop/Status and session state.
 - **Data plane:** device frames → V4L2 backend → HAL → GStreamer/network media.
-- **Tương tác:** Control plane thay đổi lifecycle/state của data plane; video payload không đi qua gRPC.
-- **Production** chỉ có 1 capture path. Diagnostic `v4l2src` không chạy đồng thời trên cùng camera. Simulated backend **thay thế** V4L2 trong tests, không là camera thật thứ hai.
+- Control changes the video path's lifecycle; frame payload does not travel through gRPC.
+- Production has one capture owner. Diagnostic `v4l2src` must not run on the same camera concurrently. The simulated backend **replaces** V4L2 in tests; it is not a second physical camera.
 
 ## 3. Responsibility & dependency boundaries
 
@@ -47,7 +41,7 @@ flowchart TB
  `camstreamsrc` C/GObject | Borrowed HAL access, caps, copy-first GstBuffer/metadata/frame release bridge | HAL instance/module reference; direct device open/ioctl |
  Controller C++17 | GStreamer pipeline state, bus and coordinated teardown | Direct backend fd/queue; HAL instance/module reference |
  CameraService C++17 | HAL instance and backend module client reference, authoritative session state, orchestration, RPC policy | Per-frame V4L2 mechanics |
- gRPC adapter | Translate remote request/result, auth/deadline/status mapping | Own camera instance independently |
+ gRPC adapter | Validate requests, check cancellation and map statuses; gRPC/client enforce deadlines; **no authentication or TLS is implemented** | Own camera instance independently |
  Receiver | Decode/display video on laptop | Direct HAL/BBB device access |
 
 Dependency arrow should generally point downward: gRPC adapter → service → controller/plugin → HAL → backend → kernel. HAL must build/test without GStreamer and RPC. Backend must be usable/testable without service. Avoid cyclic libraries and hidden singleton side channels.
@@ -56,7 +50,7 @@ Approval classes: architecture/language and preserved ABI/ownership/concurrency 
 
 ## 4. Selected baseline and protected HAL invariants
 
-The selected legacy revision, exclusions and migration approval scope are maintained only in [migration baseline](../development/migration-baseline.md). This contract owns the protected behavior below, not milestone status. Recheck source identity before any separately authorized migration.
+The selected legacy revision, exclusions and migration approval scope remain in the private local migration baseline. This contract owns the protected behavior below, not milestone status. Recheck source identity before any separately authorized migration.
 
 Protected invariants:
 
@@ -81,7 +75,7 @@ operations, while preserving callback signatures and opaque backend instances. O
 than being interpreted as v2. SPI v2 uses fixed HAL-owned slots and exact size checks; extensions require a new hook.
 Preserve minimum `struct_size` acceptance for unchanged public v1 structures; do not invent
 reserved-field rejection. No private mutex or C++ type enters the public ABI. Binary compatibility verification belongs
-to [verification §3.1](../engineering/verification-gates.md#31-c11-hal-coreruntime), separately for host and ARM.
+to the local verification gates and the [M7 evidence report](../verification/m7-verification-report.md), separately for host and ARM.
 
 C++ callbacks must contain their own exceptions and preserve declared signatures/status behavior; void cleanup callbacks remain void and nonthrowing. Pure C11 HAL/runtime/backends require no new C++ bridge to catch callbacks that violate this contract. Retaining defensive C++ catch code is not a requirement to retain C++ runtime dependencies in the C port.
 
@@ -127,7 +121,16 @@ At M0-B, the application-level HAL instance/module-reference owner and service/p
 
 **Approved M4 baseline:** copy-first. Copy into independently owned GstBuffer storage, successfully release the HAL token, then publish. If release fails, retain cleanup ownership and report failure; do not publish a normal success. Copied downstream buffers can outlive HAL teardown because they no longer borrow HAL storage.
 
-**Optional wrap only:** do not destroy backend module/instance or unmap/QBUF storage while a downstream memory owner can still read it or notify HAL release. Current HAL has no camera retain/unref API. A future application-owned lease is a proposed integration mechanism, not an implicit ABI addition. Detailed timelines: [GStreamer §5](../engineering/gstreamer-guidelines.md#buffer-lifetimes).
+**Optional wrap only:** do not destroy backend module/instance or unmap/QBUF storage while a downstream memory owner can still read it or notify HAL release. Current HAL has no camera retain/unref API. A future application-owned lease is a proposed integration mechanism, not an implicit ABI addition. Current copy-first timeline: [runtime lifecycle](../runtime-lifecycle.md).
+
+---
+
+## Historical appendix — superseded planning context
+
+The following M0-B tables and staged proposals remain for decision provenance. They describe what was proposed or
+deferred **at that time**; they do not redefine the implemented gRPC, media, ownership or Buildroot behavior above.
+The current architecture and code determine today's implementation, while §§3–5 remain the protected contract.
+In particular, RTP/JPEG over UDP is implemented; its earlier “candidate/defer” wording below is historical.
 
 <a id="6-m0-b-decisions-remaining-before-m1"></a>
 
@@ -173,12 +176,12 @@ multi-camera orchestration are **REJECTED AS UNNECESSARY** for it.
 The copy-first **APPROVED INVARIANT** is unchanged: validate payload and stride, copy into GstBuffer-owned storage,
 successfully release the HAL token before publication, and retain cleanup ownership on release failure. A copied
 downstream buffer may outlive the HAL context. Stop cannot call HAL concurrently with the source, and a failed release
-must not be presented as success. See [GStreamer buffer lifetimes](../engineering/gstreamer-guidelines.md#buffer-lifetimes).
+must not be presented as success. See [frame ownership](../runtime-lifecycle.md).
 
 Requested FPS is a client target; active FPS is the rational interval confirmed by the driver; delivered FPS is measured
 from frames at a named observation point over a stated interval. `S_FMT`, `S_PARM/G_PARM`, advertised caps and a
 negotiated GstCaps value do not measure delivered FPS. Historical C270 diagnostic results and their limits remain in
-[source evidence](../../SOURCE_EVIDENCE.md) and the selected legacy Stage 6A/7 reports.
+private local source evidence and the selected legacy Stage 6A/7 reports.
 
 **M6 control-plane decision:** the frozen single-camera API is
 [`camstream.control.v1`](../../apps/grpc-control/proto/camera_control.proto), with semantics in the
@@ -188,9 +191,10 @@ the gRPC adapter borrows it and the controller retains pipeline ownership. Every
 service generation, checked under the operation lock. A deadline or lost response does not undo a committed state;
 clients reconcile through GetStatus. The server defaults to plaintext loopback; remote plaintext requires an explicit
 trusted-lab opt-in. M6 carries control only, with no remote media endpoint. Host and ARM evidence is recorded in the
-[M6 verification report](../development/m6-grpc-control.md); BBB remote acceptance remains separate.
+[M7 verification report](../verification/m7-verification-report.md); the historical M6 control result alone did not
+establish remote media delivery.
 
-**DEFERRED WITH REASON:** freeze codec and network transport at M7 after a bounded BBB-to-laptop comparison of
+**Historical M0-B deferral, superseded for the chosen RTP/JPEG transport:** freeze codec and network transport at M7 after a bounded BBB-to-laptop comparison of
 available elements, delivered FPS, drops, latency, CPU/RSS, bandwidth and USB events; RTP/UDP remains a candidate.
 Set product performance thresholds before that acceptance run. Choose production listener security before deployment
 outside the explicitly opted-in trusted lab, based on the actual LAN exposure policy and measured gRPC dependency
@@ -226,7 +230,7 @@ Stage labels beyond M0 are **planning aids**, not an approval to execute all pha
 
 | Topic | Decision | Reason |
 |---|---|---|
- V4L2 Phase-1 enumeration | KEEP | At M0-B, committed behavior was source-reviewed without a new runtime/test PASS. Later M2-B host evidence is in [M2-B migration](../development/m2b-migration.md). |
+ V4L2 Phase-1 enumeration | KEEP | At M0-B, committed behavior was source-reviewed without a new runtime/test PASS. Later M2-B host evidence remains in the private local migration report. |
  HAL C public ABI + token model | KEEP | Stable coupling boundary and ownership |
  HAL/backend implementation C11 | CHANGE in separate parity port | Explicit Embedded C learning goal; professional C lifecycle |
  `camstreamsrc` as only production source | BUILD after HAL streaming works | Avoid two capture paths; enables backend substitution |
@@ -236,7 +240,7 @@ Stage labels beyond M0 are **planning aids**, not an approval to execute all pha
  C++ CameraService | EVOLVE to long-lived service | RPC lifecycle and sessions |
  gRPC/Proto | BUILD for control | Remote typed API |
  Dedicated raw TCP/UDS command server | REJECT MVP | Duplicate Start/Stop interface |
- Mandatory RTP/UDP, eventfd, command queue, DMA-BUF | DEFER | Depends on transport/concurrency/measurement |
+ Mandatory RTP/UDP, eventfd, command queue, DMA-BUF | DEFER at M0-B; RTP/JPEG over UDP later implemented | Historical transport/concurrency/measurement decision |
  MJPEG in HAL v1 | REJECT unless ABI separately evolves | Current format representability YUYV-only |
  AI/web UI/recording/multi-camera | OUT OF MVP | Scope creep |
 

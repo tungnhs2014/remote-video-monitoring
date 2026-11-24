@@ -5,6 +5,13 @@
 /out/
 /CMakeUserPresets.json
 /compile_commands.json
+/.local-artifacts/
+
+# Local runtime evidence.
+/logs/
+/captures/
+/diagnostics/
+/*.log
 
 # Local editor files.
 *.swp
@@ -16,8 +23,22 @@
 /.codex/
 
 # Internal project evidence and documentation
+/.local-reference/
 /SOURCE_EVIDENCE.md
 /docs/*
-!/docs/development/
-/docs/development/*
-!/docs/development/m7-network-video.md
+!/docs/getting-started.md
+!/docs/system-architecture.md
+!/docs/component-design.md
+!/docs/runtime-lifecycle.md
+!/docs/applied-embedded-linux.md
+!/docs/build-and-deployment.md
+!/docs/troubleshooting.md
+!/docs/architecture/
+/docs/architecture/*
+!/docs/architecture/system-contracts.md
+!/docs/engineering/
+/docs/engineering/*
+!/docs/engineering/project-conventions.md
+!/docs/verification/
+/docs/verification/*
+!/docs/verification/m7-verification-report.md

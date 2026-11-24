@@ -1,14 +1,18 @@
-# M6 gRPC control contract
+# Camera control gRPC contract
 
-This is the M6 decision for the single-camera control plane. It supersedes the historical *proposed* RPC wording in
-`docs/engineering/grpc-ipc-guidelines.md`; Camera HAL and backend SPI v2 contracts are unchanged. The wire contract is
+This is the current single-camera control-plane contract. It supersedes earlier planning notes; Camera HAL and
+backend SPI v2 contracts are unchanged. The wire contract is
 `proto/camera_control.proto`, package `camstream.control.v1`. Retire fields with `reserved` tags/names; add compatible
 fields rather than reusing a tag. The generated C++ is build output, not handwritten application logic.
 
 ## Identity, configuration and observations
 
 - The sole logical ID is `camera0`. The server operator supplies its backend module, camstreamsrc plugin and source
-  identifier at startup. There is no built-in `/dev/video0` fallback. `ListCameras` reports this configured mapping,
+  identifier at startup. The server executable requires an explicit `--source` and has no built-in `/dev/video0`
+  fallback. The shipped [SysV init config](../../br2-external/package/remote-video-monitoring/remote-video-monitoring.conf)
+  supplies `RVM_SOURCE=/dev/video0` to the [init script](../../br2-external/package/remote-video-monitoring/S90remote-video-monitoring),
+  which passes it as `--source`; the operator must verify that this node is the actual Video Capture device.
+  `ListCameras` reports this configured mapping,
   **not** a hardware enumeration or proof that the device is currently available. `GetCapabilities` opens the source
   through the service-owned HAL operation while Idle, validates the backend's actual configuration list, and returns
   only modes it reports. Unknown IDs return `NOT_FOUND`.
@@ -51,5 +55,5 @@ state/generation conflicts return `FAILED_PRECONDITION`; unavailable device/back
 internal errors return `INTERNAL`. A deadline after commit may be reported by gRPC to the client while GetStatus still
 shows the committed state. Detailed backend paths stay in local logs; RPC errors use bounded, operation-level text.
 
-Build and test evidence, dependency footprint and manual BBB commands are in
-[`docs/development/m6-grpc-control.md`](../../docs/development/m6-grpc-control.md).
+Current M7 evidence and owner operations are in the [verification report](../../docs/verification/m7-verification-report.md)
+and [build and deployment guide](../../docs/build-and-deployment.md). The historical M6 report remains local.

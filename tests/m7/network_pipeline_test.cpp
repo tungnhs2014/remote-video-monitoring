@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -339,6 +340,88 @@ bool invalid_settings()
            rejected({camstream::MediaOutputMode::RtpJpeg, "127.0.0.1", 0U});
 }
 
+bool active_mode_contract()
+{
+    camstream::GStreamerController local;
+    camstream::GStreamerController network(network_output(50085U));
+    std::string error;
+    camstream_camera_stream_config_v1 valid = request();
+    valid.width = 640U;
+    valid.height = 480U;
+    valid.frame_rate_numerator = 15U;
+    if (!local.accepts(valid, error) || !network.accepts(valid, error))
+    {
+        return false;
+    }
+
+    const auto rejected_by_both = [&](const camstream_camera_stream_config_v1& active)
+    {
+        return !local.accepts(active, error) && !network.accepts(active, error);
+    };
+    camstream_camera_stream_config_v1 invalid = valid;
+    invalid.abi_version = 0U;
+    if (!rejected_by_both(invalid))
+    {
+        return false;
+    }
+    invalid = valid;
+    invalid.struct_size = static_cast<std::uint32_t>(sizeof(invalid) - 1U);
+    if (!rejected_by_both(invalid))
+    {
+        return false;
+    }
+    invalid = valid;
+    invalid.pixel_format = CAMSTREAM_CAMERA_FOURCC('N', 'V', '1', '2');
+    if (!rejected_by_both(invalid))
+    {
+        return false;
+    }
+    for (std::uint32_t width : {0U, 1U, 3U, static_cast<std::uint32_t>(G_MAXINT) + 1U})
+    {
+        invalid = valid;
+        invalid.width = width;
+        if (!rejected_by_both(invalid))
+        {
+            return false;
+        }
+    }
+    for (std::uint32_t height : {0U, static_cast<std::uint32_t>(G_MAXINT) + 1U})
+    {
+        invalid = valid;
+        invalid.height = height;
+        if (!rejected_by_both(invalid))
+        {
+            return false;
+        }
+    }
+    for (std::uint32_t rate : {0U, static_cast<std::uint32_t>(G_MAXINT) + 1U})
+    {
+        invalid = valid;
+        invalid.frame_rate_numerator = rate;
+        if (!rejected_by_both(invalid))
+        {
+            return false;
+        }
+        invalid = valid;
+        invalid.frame_rate_denominator = rate;
+        if (!rejected_by_both(invalid))
+        {
+            return false;
+        }
+    }
+    invalid = valid;
+    invalid.width = 66U;
+    if (!local.accepts(invalid, error) || network.accepts(invalid, error))
+    {
+        return false;
+    }
+    invalid = valid;
+    invalid.width = 65536U;
+    invalid.height = 32768U;
+    const bool representable = sizeof(gsize) > sizeof(std::uint32_t);
+    return local.accepts(invalid, error) == representable && !network.accepts(invalid, error);
+}
+
 bool local_regression(const std::string& backend, const std::string& plugin)
 {
     camstream::CameraService service;
@@ -456,7 +539,8 @@ int main(int argc, char* argv[])
     {
         return std::strcmp(argv[3], "--missing-encoder") == 0 && expect(missing_encoder(backend, plugin), "missing encoder cleanup") ? 0 : 1;
     }
-    return expect(invalid_settings(), "media settings validation") && expect(local_regression(backend, plugin), "default local mode") &&
+    return expect(invalid_settings(), "media settings validation") && expect(active_mode_contract(), "active mode contract") &&
+                   expect(local_regression(backend, plugin), "default local mode") &&
                    expect(network_loopback(backend, plugin), "RTP/JPEG loopback and restart") &&
                    expect(no_receiver(backend, plugin), "sender status without receiver") &&
                    expect(fault_cleanup(backend, plugin), "caps/link/state cleanup")

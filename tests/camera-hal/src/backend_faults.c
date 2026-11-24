@@ -72,7 +72,7 @@ static camstream_camera_status_t fault_open(camstream_camera_instance* instance,
     if (strcmp(source, "release-fail") != 0 && strcmp(source, "invalid-frame") != 0 &&
             strcmp(source, "acquire-fail") != 0 && strcmp(source, "wait-timeout") != 0 &&
             strcmp(source, "blocked-wait") != 0 && strcmp(source, "gated-release") != 0 &&
-            strcmp(source, "padded") != 0)
+            strcmp(source, "padded") != 0 && strcmp(source, "unsupported-active") != 0)
     {
         return CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED;
     }
@@ -177,6 +177,10 @@ static camstream_camera_status_t fault_configure(camstream_camera_instance* inst
         return CAMSTREAM_CAMERA_STATUS_INVALID_STATE;
     }
     fill_configuration(active, requested->source_identifier);
+    if (strcmp(requested->source_identifier, "unsupported-active") == 0)
+    {
+        active->width = 3U; // HAL accepts this mode, while camstreamsrc cannot publish packed YUYV with odd width.
+    }
     instance->configured = true;
     return CAMSTREAM_CAMERA_STATUS_OK;
 }

@@ -13,6 +13,7 @@
 namespace camstream
 {
 
+/** Operator-selected server mapping; no RPC client chooses these paths or source identifier. */
 struct CameraControlSettings
 {
     std::string backend_path;
@@ -20,10 +21,15 @@ struct CameraControlSettings
     std::string source_identifier;
 };
 
-/** Borrows one process-owned CameraService. Its owner must drain gRPC handlers before destroying the service. */
+/** Implements the single-camera control RPCs for logical ID camera0.
+ * Borrows one process-owned CameraService; the server drains handlers before destroying that service.
+ * Mutating calls require an expected generation. A lost/cancelled reply does not undo a committed operation;
+ * clients reconcile through GetStatus. Media payload never crosses this interface.
+ */
 class CameraControlAdapter final : public control::v1::CameraControl::Service
 {
   public:
+    /** Validates the operator mapping; throws std::invalid_argument for missing or oversized fields. */
     CameraControlAdapter(CameraService& service, CameraControlSettings settings);
 
     grpc::Status ListCameras(

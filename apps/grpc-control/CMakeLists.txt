@@ -31,11 +31,13 @@ ADD_CUSTOM_COMMAND(
 ADD_LIBRARY(camstream-grpc-proto STATIC
     ${CAMSTREAM_GRPC_GENERATED_DIR}/camera_control.pb.cc
     ${CAMSTREAM_GRPC_GENERATED_DIR}/camera_control.grpc.pb.cc)
+
 TARGET_COMPILE_FEATURES(camstream-grpc-proto PUBLIC cxx_std_17)
 TARGET_INCLUDE_DIRECTORIES(camstream-grpc-proto PUBLIC ${CAMSTREAM_GRPC_GENERATED_DIR})
 TARGET_LINK_LIBRARIES(camstream-grpc-proto PUBLIC PkgConfig::GRPCPP PkgConfig::PROTOBUF)
 
 ADD_LIBRARY(camstream-grpc-adapter STATIC src/grpc_adapter.cpp)
+
 TARGET_COMPILE_FEATURES(camstream-grpc-adapter PUBLIC cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-grpc-adapter PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_INCLUDE_DIRECTORIES(camstream-grpc-adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -43,11 +45,13 @@ TARGET_LINK_LIBRARIES(camstream-grpc-adapter PUBLIC camstream-grpc-proto camstre
     PRIVATE camstream::common-log)
 
 ADD_EXECUTABLE(camstream-grpc-server src/server_main.cpp)
+
 TARGET_COMPILE_FEATURES(camstream-grpc-server PRIVATE cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-grpc-server PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_LINK_LIBRARIES(camstream-grpc-server PRIVATE camstream-grpc-adapter camstream::common-log)
 
 ADD_EXECUTABLE(camstream-grpc-client src/client_main.cpp)
+
 TARGET_COMPILE_FEATURES(camstream-grpc-client PRIVATE cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-grpc-client PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_LINK_LIBRARIES(camstream-grpc-client PRIVATE camstream-grpc-proto)
@@ -56,11 +60,14 @@ INSTALL(TARGETS camstream-grpc-server camstream-grpc-client RUNTIME DESTINATION 
 
 IF(BUILD_TESTING)
     TARGET_COMPILE_DEFINITIONS(camstream-grpc-adapter PUBLIC CAMSTREAM_M6_TESTING)
+
     ADD_EXECUTABLE(camstream-grpc-integration-test tests/integration_test.cpp)
+
     TARGET_COMPILE_FEATURES(camstream-grpc-integration-test PRIVATE cxx_std_17)
     TARGET_COMPILE_OPTIONS(camstream-grpc-integration-test PRIVATE -Wall -Wextra -Wpedantic)
     TARGET_LINK_LIBRARIES(camstream-grpc-integration-test PRIVATE camstream-grpc-adapter)
     ADD_DEPENDENCIES(camstream-grpc-integration-test camstream-camera-backend-simulated gstcamstreamsrc)
+
     ADD_TEST(NAME camstream-grpc-integration
         COMMAND camstream-grpc-integration-test
             $<TARGET_FILE:camstream-camera-backend-simulated>

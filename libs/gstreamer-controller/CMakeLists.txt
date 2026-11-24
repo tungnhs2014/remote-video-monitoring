@@ -1,10 +1,13 @@
 ADD_LIBRARY(camstream-gstreamer-controller STATIC src/gstreamer_controller.cpp)
 ADD_LIBRARY(camstream::gstreamer-controller ALIAS camstream-gstreamer-controller)
+
 TARGET_COMPILE_FEATURES(camstream-gstreamer-controller PUBLIC cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-gstreamer-controller PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_INCLUDE_DIRECTORIES(camstream-gstreamer-controller PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-TARGET_LINK_LIBRARIES(camstream-gstreamer-controller PUBLIC gstcamstreamsrc PkgConfig::CAMSTREAM_GST camstream::camera-hal
+TARGET_LINK_LIBRARIES(camstream-gstreamer-controller PUBLIC
+    gstcamstreamsrc PkgConfig::CAMSTREAM_GST camstream::camera-hal
     PRIVATE camstream::common-log)
+
 IF(BUILD_TESTING)
     TARGET_COMPILE_DEFINITIONS(camstream-gstreamer-controller PUBLIC CAMSTREAM_M5_TESTING)
     TARGET_COMPILE_DEFINITIONS(camstream-gstreamer-controller PUBLIC CAMSTREAM_M7_TESTING)

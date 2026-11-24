@@ -358,6 +358,9 @@ camstream_camera_status_t v4l2_close(camstream_camera_instance* camera)
     {
         return CAMSTREAM_CAMERA_STATUS_RESOURCE_ERROR;
     }
+    /* STREAMOFF or unmap failures retain the FD for cleanup. Once close is called, Linux may reuse
+     * its number even if close reports an error, so record warnings and reset ownership.
+     */
     bool cleanup_warning = false;
     if (camera->buffer_release_required && v4l2_release_requested_buffers(camera->fd) == -1)
     {

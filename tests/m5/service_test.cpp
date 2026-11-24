@@ -160,6 +160,22 @@ int main(int argc, char* argv[])
         }
     }
 
+    const auto unsupported_request = request("unsupported-active", 2U, 2U);
+    const std::uint64_t generation_before_rejection = service.status().generation;
+    const auto unsupported_result = service.configure(faults, plugin, unsupported_request);
+    const auto rejected_status = service.status();
+    if (!expect(!unsupported_result.success && unsupported_result.hal_status == CAMSTREAM_CAMERA_STATUS_NOT_SUPPORTED,
+                "unsupported active mode rejected during Configure") ||
+            !expect(rejected_status.state == camstream::CameraServiceState::Idle &&
+                        rejected_status.generation == generation_before_rejection,
+                    "unsupported active mode rolls back without generation change") ||
+            !expect(!service.start().success, "Start requires a committed configuration") ||
+            !expect(service.configure(simulated, plugin, simulated_request).success, "Configure after active mode rollback") ||
+            !expect(service.start().success && service.stop().success, "Start/Stop after active mode rollback"))
+    {
+        return 1;
+    }
+
     if (!expect(service.configure(simulated, plugin, simulated_request).success, "exception test configure") ||
             !expect(service.start().success, "exception test start"))
     {

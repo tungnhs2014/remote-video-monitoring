@@ -1,5 +1,6 @@
 ADD_LIBRARY(camstream-common-log STATIC src/log.c)
 ADD_LIBRARY(camstream::common-log ALIAS camstream-common-log)
+
 SET_TARGET_PROPERTIES(camstream-common-log PROPERTIES POSITION_INDEPENDENT_CODE ON)
 TARGET_COMPILE_FEATURES(camstream-common-log PUBLIC c_std_11)
 TARGET_COMPILE_OPTIONS(camstream-common-log PRIVATE -Wall -Wextra -Wpedantic)

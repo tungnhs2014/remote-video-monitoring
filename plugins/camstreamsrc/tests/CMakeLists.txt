@@ -1,9 +1,12 @@
 ADD_EXECUTABLE(camstream-src-session-test session_test.c)
+
 TARGET_COMPILE_FEATURES(camstream-src-session-test PRIVATE c_std_11)
 TARGET_COMPILE_OPTIONS(camstream-src-session-test PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_COMPILE_DEFINITIONS(camstream-src-session-test PRIVATE CAMSTREAM_M4_TESTING)
-TARGET_LINK_LIBRARIES(camstream-src-session-test PRIVATE gstcamstreamsrc PkgConfig::CAMSTREAM_GST camstream::camera-hal)
-ADD_DEPENDENCIES(camstream-src-session-test camstream-camera-backend-simulated camstream-camera-backend-faults)
+TARGET_LINK_LIBRARIES(camstream-src-session-test PRIVATE
+    gstcamstreamsrc PkgConfig::CAMSTREAM_GST camstream::camera-hal)
+ADD_DEPENDENCIES(camstream-src-session-test
+    camstream-camera-backend-simulated camstream-camera-backend-faults)
 
 ADD_TEST(NAME camstream-src-session
     COMMAND camstream-src-session-test

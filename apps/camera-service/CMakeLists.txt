@@ -1,16 +1,23 @@
 ADD_LIBRARY(camstream-camera-service STATIC src/camera_service.cpp)
 ADD_LIBRARY(camstream::camera-service ALIAS camstream-camera-service)
+
 TARGET_COMPILE_FEATURES(camstream-camera-service PUBLIC cxx_std_17)
 TARGET_COMPILE_OPTIONS(camstream-camera-service PRIVATE -Wall -Wextra -Wpedantic)
 TARGET_INCLUDE_DIRECTORIES(camstream-camera-service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-TARGET_LINK_LIBRARIES(camstream-camera-service PUBLIC camstream::gstreamer-controller camstream::camera-hal
+TARGET_LINK_LIBRARIES(camstream-camera-service PUBLIC
+    camstream::gstreamer-controller camstream::camera-hal
     PRIVATE camstream::common-log)
+
 IF(BUILD_TESTING AND CAMSTREAM_ENABLE_GRPC)
     TARGET_COMPILE_DEFINITIONS(camstream-camera-service PUBLIC CAMSTREAM_M6_TESTING)
 ENDIF()
 
-ADD_EXECUTABLE(camstream-m5-service-smoke tests/m5_service_smoke.cpp)
-TARGET_COMPILE_FEATURES(camstream-m5-service-smoke PRIVATE cxx_std_17)
-TARGET_COMPILE_OPTIONS(camstream-m5-service-smoke PRIVATE -Wall -Wextra -Wpedantic)
-TARGET_LINK_LIBRARIES(camstream-m5-service-smoke PRIVATE camstream::camera-service)
-INSTALL(TARGETS camstream-m5-service-smoke RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+IF(BUILD_TESTING)
+    ADD_EXECUTABLE(camstream-m5-service-smoke tests/m5_service_smoke.cpp)
+
+    TARGET_COMPILE_FEATURES(camstream-m5-service-smoke PRIVATE cxx_std_17)
+    TARGET_COMPILE_OPTIONS(camstream-m5-service-smoke PRIVATE -Wall -Wextra -Wpedantic)
+    TARGET_LINK_LIBRARIES(camstream-m5-service-smoke PRIVATE camstream::camera-service)
+
+    INSTALL(TARGETS camstream-m5-service-smoke RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+ENDIF()

@@ -33,6 +33,10 @@ enum class CameraServiceOperation
     Discover
 };
 
+/** Snapshot of the authoritative session and most recent operation.
+ * generation advances on state changes within this process; it is not a persistent session ID.
+ * frames counts the controller's local observation point, not remote video delivery.
+ */
 struct CameraServiceStatus
 {
     CameraServiceState state;
@@ -46,6 +50,7 @@ struct CameraServiceStatus
     std::string detail;
 };
 
+/** Operation outcome; committed_status is present only after success. */
 struct CameraServiceResult
 {
     bool success;
@@ -54,6 +59,7 @@ struct CameraServiceResult
     std::optional<CameraServiceStatus> committed_status = std::nullopt;
 };
 
+/** Enumerated HAL modes and their operation result. */
 struct CameraServiceCapabilities
 {
     CameraServiceResult result;
@@ -76,20 +82,29 @@ class CameraService final
     CameraService(const CameraService&) = delete;
     CameraService& operator=(const CameraService&) = delete;
 
-    /** Loads one backend, opens the requested source and returns its driver-confirmed active mode. */
+    /** Loads one backend, opens the requested source and reports its backend-confirmed active mode.
+     * Requires Idle, or an identical request while Configured. A supplied expected_generation must match
+     * the current snapshot. If a post-load step fails, cleanup is attempted before Configured is committed.
+     */
     CameraServiceResult configure(const std::string& backend_path, const std::string& plugin_path,
             const camstream_camera_stream_config_v1& requested, std::optional<std::uint64_t> expected_generation = std::nullopt);
 
-    /** Starts HAL before the source pipeline. Valid only after successful Configure. */
+    /** Starts HAL before the source pipeline; requires Configured and checks expected_generation when supplied. */
     CameraServiceResult start(std::optional<std::uint64_t> expected_generation = std::nullopt);
 
-    /** Quiesces the pipeline before HAL cleanup and final module unload. Safe to repeat from Idle. */
+    /** Quiesces the pipeline before HAL cleanup and final module unload. Safe to repeat from Idle.
+     * A failed quiescence retains the borrowed camera; expected_generation is checked when supplied.
+     */
     CameraServiceResult stop(std::optional<std::uint64_t> expected_generation = std::nullopt);
 
-    /** Enumerates real HAL modes while Idle using a temporary service-owned camera, then releases it. */
+    /** Enumerates HAL-reported modes while Idle using a temporary service-owned camera, then releases it.
+     * This does not prove physical device availability after the call returns.
+     */
     CameraServiceCapabilities discover(const std::string& backend_path, const std::string& source_identifier);
 
-    /** Returns current state and drains this service's bus errors without touching HAL during streaming. */
+    /** Returns current state and drains bus errors without touching HAL during streaming.
+     * This call is serialized with control operations and may transition Streaming to Faulted.
+     */
     CameraServiceStatus status();
 #ifdef CAMSTREAM_M6_TESTING
     void set_before_configure_hook(std::function<void()> hook);

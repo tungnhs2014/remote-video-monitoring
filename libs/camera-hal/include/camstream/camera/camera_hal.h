@@ -45,6 +45,9 @@ typedef int32_t camstream_camera_status_t;
  * Callers initialize abi_version and struct_size before exchanging this
  * structure through the HAL. source_identifier is a bounded, NUL-terminated
  * backend-specific identifier and is not a platform device structure.
+ * Width and height are pixels; frame_rate_numerator / frame_rate_denominator
+ * express frames per second. Configure returns the backend-confirmed active
+ * values, which may differ from the request.
  */
 typedef struct camstream_camera_stream_config_v1
 {
@@ -59,7 +62,10 @@ typedef struct camstream_camera_stream_config_v1
     uint32_t reserved[4];
 } camstream_camera_stream_config_v1;
 
-/** @brief Bounded capability summary for indexed configuration discovery. */
+/** @brief Bounded capability summary for indexed configuration discovery.
+ * stream_config_count is the number of zero-based modes available while Open;
+ * maximum_plane_count is bounded by CAMSTREAM_CAMERA_MAX_PLANES.
+ */
 typedef struct camstream_camera_capabilities_v1
 {
     uint32_t abi_version;
@@ -74,6 +80,7 @@ typedef struct camstream_camera_capabilities_v1
  *
  * data remains valid only until the enclosing frame is successfully released
  * through the HAL. The upper layer must not free or modify the storage.
+ * allocation_size, bytes_used and stride are byte counts; stride is one row.
  */
 typedef struct camstream_camera_plane_v1
 {
@@ -94,7 +101,8 @@ typedef struct camstream_camera_plane_v1
  * release it even when two backends use the same private token value. An
  * implementation may have multiple outstanding frames. All plane storage
  * remains implementation-owned and valid until the matching HAL release
- * operation succeeds.
+ * operation succeeds. monotonic_timestamp_ns is in nanoseconds in the
+ * backend's monotonic clock domain; it is not directly a GStreamer PTS.
  */
 typedef struct camstream_camera_frame_v1
 {
@@ -170,33 +178,50 @@ camstream_camera_status_t camstream_camera_create(camstream_camera** camera);
  */
 void camstream_camera_destroy(camstream_camera* camera);
 
-/** @brief Copies the validated backend identity for one HAL camera. */
+/** @brief Copies the validated backend name into caller-owned NUL-terminated storage.
+ * @return OK, INVALID_ARGUMENT for invalid storage, or RESOURCE_ERROR if the buffer is too small.
+ */
 camstream_camera_status_t camstream_camera_get_backend_name(camstream_camera* camera, char* buffer, uint32_t buffer_size);
 
-/** @brief Returns the validated backend SPI version for one HAL camera (v2 for push binding). */
+/** @brief Writes the active backend SPI version (v2 for push binding) to abi_version. */
 camstream_camera_status_t camstream_camera_get_backend_abi_version(camstream_camera* camera, uint32_t* abi_version);
 
-/** @brief Opens one backend-specific source from Created state. */
+/** @brief Opens one bounded backend-specific source identifier from Created state.
+ * @return OK on Open; INVALID_ARGUMENT for an invalid identifier, INVALID_STATE outside Created,
+ * or the backend status on device failure.
+ */
 camstream_camera_status_t camstream_camera_open(camstream_camera* camera, const char* source_identifier);
 
-/** @brief Closes a stopped or non-started source. */
+/** @brief Closes an Open, Configured or Stopped source after all frames are released.
+ * Created is already closed and returns OK. On callback failure the HAL keeps its state;
+ * consult the backend diagnostic before deciding whether cleanup can be retried.
+ */
 camstream_camera_status_t camstream_camera_close(camstream_camera* camera);
 
-/** @brief Reports bounded capabilities for an open source. */
+/** @brief Reports bounded capabilities in Open or Configured state.
+ * The caller initializes capabilities->abi_version and struct_size. Output is copied only on success.
+ */
 camstream_camera_status_t camstream_camera_get_capabilities(camstream_camera* camera, camstream_camera_capabilities_v1* capabilities);
 
-/** @brief Returns one supported configuration by zero-based index. */
+/** @brief Returns one supported configuration by zero-based index while Open.
+ * The caller initializes configuration->abi_version and struct_size. Output is copied only on success.
+ */
 camstream_camera_status_t camstream_camera_get_stream_configuration(
         camstream_camera* camera, uint32_t index, camstream_camera_stream_config_v1* configuration);
 
-/** @brief Applies a request and reports the backend's active configuration. */
+/** @brief Applies a request while Open and reports the backend-confirmed active mode.
+ * Both structures carry valid ABI headers; active->abi_version and struct_size must be initialized
+ * by the caller. The HAL enters Configured and copies active only on success.
+ */
 camstream_camera_status_t camstream_camera_configure(
         camstream_camera* camera, const camstream_camera_stream_config_v1* requested, camstream_camera_stream_config_v1* active);
 
-/** @brief Starts frame delivery. */
+/** @brief Starts frame delivery from Configured state; enters Started only on success. */
 camstream_camera_status_t camstream_camera_start(camstream_camera* camera);
 
-/** @brief Waits for frame availability and may return the normal TIMEOUT status. */
+/** @brief Waits up to timeout_ms milliseconds while Started.
+ * TIMEOUT means no frame became available within the bound; it is not a frame ownership transfer.
+ */
 camstream_camera_status_t camstream_camera_wait_frame(camstream_camera* camera, uint32_t timeout_ms);
 
 /**
@@ -223,10 +248,14 @@ camstream_camera_status_t camstream_camera_acquire_frame(camstream_camera* camer
  */
 camstream_camera_status_t camstream_camera_release_frame(camstream_camera* camera, uint64_t frame_token);
 
-/** @brief Stops frame delivery after every outstanding frame is released. */
+/** @brief Stops Started delivery after every outstanding frame is released.
+ * A repeated call in Stopped returns OK. A failed backend stop leaves the HAL in Started.
+ */
 camstream_camera_status_t camstream_camera_stop(camstream_camera* camera);
 
-/** @brief Copies the backend instance's last diagnostic into bounded storage. */
+/** @brief Copies the latest HAL or backend-instance diagnostic into caller-owned storage.
+ * buffer_size includes the terminating NUL; later operations may replace the diagnostic.
+ */
 camstream_camera_status_t camstream_camera_get_last_error(camstream_camera* camera, char* buffer, uint32_t buffer_size);
 
 // clang-format on

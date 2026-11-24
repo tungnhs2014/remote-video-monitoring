@@ -20,7 +20,10 @@ typedef enum camstream_log_level
     CAMSTREAM_LOG_DEBUG
 } camstream_log_level;
 
-/** @brief Writes one allocation-free, module-tagged diagnostic to standard error. */
+/** @brief Writes a module-tagged printf-style diagnostic to standard error.
+ * module and format must be valid strings. This function performs no explicit allocation;
+ * separate stdio writes may interleave with output from other threads.
+ */
 void camstream_log_write(const char* module, camstream_log_level level, const char* format, ...);
 
 // clang-format on

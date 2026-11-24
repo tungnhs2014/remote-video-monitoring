@@ -42,7 +42,10 @@ typedef void (*camstream_camera_destroy_v1_fn)(camstream_camera_instance* instan
 /** @brief Opens one backend-specific source on a created instance. */
 typedef camstream_camera_status_t (*camstream_camera_open_v1_fn)(camstream_camera_instance* instance, const char* source_identifier);
 
-/** @brief Closes a stopped or non-started source. */
+/** @brief Closes a stopped or non-started source after frame ownership is resolved.
+ * HAL leaves its state unchanged on a non-OK callback result. Backend cleanup may be partial;
+ * its diagnostic must distinguish retained resources from post-release warnings.
+ */
 typedef camstream_camera_status_t (*camstream_camera_close_v1_fn)(camstream_camera_instance* instance);
 
 /** @brief Reports bounded capabilities for an open source. */
@@ -60,7 +63,7 @@ typedef camstream_camera_status_t (*camstream_camera_configure_v1_fn)(
 /** @brief Starts delivery for a configured instance. */
 typedef camstream_camera_status_t (*camstream_camera_start_v1_fn)(camstream_camera_instance* instance);
 
-/** @brief Waits for availability and may return the normal TIMEOUT status. */
+/** @brief Waits for availability for at most timeout_ms milliseconds; TIMEOUT is normal. */
 typedef camstream_camera_status_t (*camstream_camera_wait_frame_v1_fn)(camstream_camera_instance* instance, uint32_t timeout_ms);
 
 /** @brief Transfers temporary access to one backend-owned frame. */
@@ -79,7 +82,10 @@ typedef camstream_camera_status_t (*camstream_camera_get_last_error_v1_fn)(
 
 #define CAMSTREAM_CAMERA_BACKEND_ABI_VERSION_V2 2U
 
-/** @brief Mandatory backend callbacks. The HAL owns this table; the backend fills it during its constructor. */
+/** @brief Mandatory backend callbacks. The HAL owns this table; the backend fills it during its constructor.
+ * The HAL serializes no calls on an individual instance: its caller must do so. Status-returning
+ * callbacks report failures through their declared status; void destroy performs best-effort cleanup.
+ */
 typedef struct camstream_camera_ops_v2
 {
     uint32_t struct_size;

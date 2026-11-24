@@ -122,9 +122,18 @@ GstBusSyncReply GStreamerController::on_bus_message(GstBus* bus, GstMessage* mes
 bool GStreamerController::accepts(const camstream_camera_stream_config_v1& active, std::string& error) const
 {
     error.clear();
+    if (active.abi_version != CAMSTREAM_CAMERA_ABI_VERSION_V1 || active.struct_size < sizeof(active) ||
+            active.pixel_format != CAMSTREAM_CAMERA_PIXEL_FORMAT_YUYV || active.width < 2U || (active.width & 1U) != 0U ||
+            active.width > G_MAXINT || active.height == 0U || active.height > G_MAXINT ||
+            active.frame_rate_numerator == 0U || active.frame_rate_numerator > G_MAXINT ||
+            active.frame_rate_denominator == 0U || active.frame_rate_denominator > G_MAXINT ||
+            static_cast<guint64>(active.width) * 2U * active.height > G_MAXSIZE)
+    {
+        error = "camstreamsrc requires active YUYV, even width, representable dimensions and positive GStreamer framerate";
+        return false;
+    }
     if (media_.mode == MediaOutputMode::RtpJpeg &&
-            (active.pixel_format != CAMSTREAM_CAMERA_PIXEL_FORMAT_YUYV || active.width == 0U || active.width > 2040U ||
-                    active.height == 0U || active.height > 2040U || (active.width % 8U) != 0U || (active.height % 8U) != 0U))
+            (active.width > 2040U || active.height > 2040U || (active.width % 8U) != 0U || (active.height % 8U) != 0U))
     {
         error = "RTP/JPEG requires active YUYV dimensions divisible by eight and no greater than 2040";
         return false;

@@ -18,7 +18,7 @@ enum class MediaOutputMode
     RtpJpeg
 };
 
-/** Immutable per-process output selection. RTP/JPEG sends to one operator-configured IPv4 receiver. */
+/** Output selection stored by the controller at construction. RTP/JPEG sends UDP to one configured IPv4 host and port. */
 struct MediaOutputConfig
 {
     MediaOutputMode mode = MediaOutputMode::Local;
@@ -26,7 +26,9 @@ struct MediaOutputConfig
     std::uint16_t port = 0U;
 };
 
-/** Owns one local or RTP/JPEG pipeline and its bus. The HAL camera is borrowed. */
+/** Owns one local or RTP/JPEG pipeline and its bus. The HAL camera is borrowed.
+ * The caller serializes start/stop with HAL session operations and keeps the camera alive until stop succeeds.
+ */
 class GStreamerController final
 {
   public:
@@ -36,19 +38,29 @@ class GStreamerController final
     GStreamerController(const GStreamerController&) = delete;
     GStreamerController& operator=(const GStreamerController&) = delete;
 
-    /** Starts a pipeline for an already started HAL camera; the caller serializes lifecycle operations. */
+    /** Starts a pipeline for an already started HAL camera; plugin_path names the camstreamsrc module.
+     * Returns false with an error string on failure. A failed cleanup can retain the pipeline and borrowed HAL
+     * camera; the owner must resolve that state before destroying the camera.
+     */
     bool start(
             camstream_camera* camera, const camstream_camera_stream_config_v1& active, const std::string& plugin_path, std::string& error);
 
-    /** Checks the driver-confirmed mode against the selected output before a service session is committed. */
+    /** Checks the active HAL mode against camstreamsrc's YUYV/caps/size limits and, for RTP/JPEG, RFC 2435 limits.
+     * Returns false with an error string for a known mode incompatibility; start checks pipeline availability.
+     */
     bool accepts(const camstream_camera_stream_config_v1& active, std::string& error) const;
 
-    /** Quiesces callbacks, resolves pending HAL release, then drops the borrowed camera and owned Gst objects. */
+    /** Quiesces callbacks, resolves pending HAL release, then drops the borrowed camera and owned Gst objects.
+     * Returns false when quiescence or release fails; the owner must retain the HAL camera for another cleanup
+     * attempt. A completed teardown may return true with a nonempty error from a preceding bus fault.
+     */
     bool stop(std::string& error);
 
-    /** Drains this controller's bus; returns false on ERROR or EOS. No other consumer may drain this bus. */
+    /** Drains this controller's bus; returns false with error on ERROR or EOS. No other consumer may drain it. */
     bool poll_bus(std::string& error);
+    /** Counts local sink handoffs or JPEG frames before RTP packetization, not receiver delivery. */
     std::uint64_t frames() const noexcept;
+    /** Reports whether a pipeline object remains owned, including one retained after failed teardown. */
     bool active() const noexcept;
 #ifdef CAMSTREAM_M7_TESTING
     /** Test-only failure injection after element creation. */

@@ -10,19 +10,25 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(CamstreamSrc, camstream_src, CAMSTREAM, SRC, GstPushSrc)
 
 /**
- * @brief Borrows a configured HAL camera and its driver-confirmed active configuration.
+ * @brief Borrows a configured HAL camera and its backend-confirmed active configuration.
  *
  * The session owner starts HAL before the source enters PAUSED, and stops/destroys HAL only after the pipeline
  * reaches NULL and any pending release is resolved. The owner serializes its HAL calls with source activity.
  * Call only while the source is stopped. Passing NULL for both arguments unbinds a quiescent source; an unresolved
  * release prevents unbinding so the borrowed camera remains available for cleanup.
+ * The active mode must be ABI v1 YUYV with even, representable dimensions and a positive rational frame rate;
+ * the source publishes copied GstBuffer storage only after successful HAL token release.
+ * @return TRUE when bound or unbound; FALSE for invalid mode, allocation failure, an already-bound/active
+ * source or unresolved frame ownership.
  */
 gboolean camstream_src_bind(CamstreamSrc* source, camstream_camera* camera, const camstream_camera_stream_config_v1* active);
 
 /** @brief Closes source admission before the owner transitions the pipeline toward NULL; performs no HAL call. */
 void camstream_src_request_stop(CamstreamSrc* source);
 
-/** @brief Retries a failed frame release after the pipeline is stopped; the session retains HAL ownership meanwhile. */
+/** @brief Retries a failed frame release after the pipeline is stopped; the session retains HAL ownership meanwhile.
+ * @return TRUE when no token remains; FALSE if unbound, active or HAL release still fails.
+ */
 gboolean camstream_src_retry_pending_release(CamstreamSrc* source);
 
 #ifdef CAMSTREAM_M4_TESTING
